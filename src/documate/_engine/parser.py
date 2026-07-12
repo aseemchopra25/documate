@@ -925,6 +925,43 @@ def file_hash(path: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
+# AST fingerprinting (documate's drift gate)
+# ---------------------------------------------------------------------------
+# A formatting-invariant, semantics-sensitive digest of a parse tree. We walk the
+# tree in pre-order and emit every node's *type*; for leaf nodes we additionally
+# emit the leaf's exact source text. Whitespace between tokens lives in the gaps
+# tree-sitter never turns into nodes, so it vanishes from the stream — reindenting,
+# re-wrapping, blank lines, trailing whitespace, and spacing-only edits
+# (``x=1`` ≡ ``x = 1``, ``f( a,b )`` ≡ ``f(a, b)``) all collapse to the same value.
+# What survives is what carries meaning: identifiers and called names, operators
+# and keywords (each an anonymous leaf whose text is the token), the shape of a
+# signature, and — because a string/char/number is a single leaf whose text is its
+# literal characters — the exact *contents* of literals (``"a  b"`` ≠ ``"a b"``,
+# ``1_000`` ≠ ``1000``). This works for every language the engine parses, not just
+# Python: the stream is just tree-sitter node types plus leaf tokens.
+#
+# Comment policy (default: drop): comment/trivia nodes are skipped, so a
+# comment-only edit does NOT change the fingerprint. Flip this one toggle to fold
+# comments in. NOTE: this ignores *comments* only — a language that models a
+# docstring as a string literal (Python) keeps it, since it is a literal, not a
+# comment.
+_FINGERPRINT_KEEP_COMMENTS = False
+
+
+def _fingerprint_tokens(node, keep_comments: bool, out: list[str]) -> None:
+    """Pre-order-serialise a tree-sitter node into `out` (node types + leaf texts)."""
+    ty = node.type
+    if not keep_comments and "comment" in ty:
+        return  # trivia: a comment-only edit must not move the fingerprint
+    out.append(ty)
+    if node.child_count == 0:  # leaf: identifier / literal / operator / keyword
+        out.append(node.text.decode("utf-8", "replace"))
+        return
+    for child in node.children:  # every child, incl. anonymous operator/punct leaves
+        _fingerprint_tokens(child, keep_comments, out)
+
+
+# ---------------------------------------------------------------------------
 # Parser
 # ---------------------------------------------------------------------------
 
@@ -1068,6 +1105,66 @@ class CodeParser:
             interpreter = first.rsplit("/", 1)[-1]
 
         return SHEBANG_INTERPRETER_TO_LANGUAGE.get(interpreter)
+
+    def _fingerprint_bytes(self, language: str, source: bytes) -> Optional[str]:
+        """16-hex AST fingerprint of `source` parsed as `language`, or None when the
+        grammar isn't packaged or the parse raises. Never raises — the drift gate
+        fails open on a broken oracle."""
+        parser = self._get_parser(language)
+        if parser is None:
+            return None
+        try:
+            tree = parser.parse(source)
+            tokens: list[str] = []
+            _fingerprint_tokens(tree.root_node, _FINGERPRINT_KEEP_COMMENTS, tokens)
+        except (ValueError, RecursionError, RuntimeError):
+            return None
+        blob = "\x00".join(tokens).encode("utf-8")
+        return hashlib.blake2b(blob, digest_size=8).hexdigest()
+
+    def fingerprint_source(self, path: Path, source) -> Optional[str]:
+        """16-hex AST fingerprint of a source snippet, in `path`'s language.
+
+        Formatting-invariant, literal-sensitive (see ``_fingerprint_tokens``). Returns
+        None (caller degrades, never gates) when the language is unknown, its grammar
+        isn't packaged, or the parse fails."""
+        language = self.detect_language(Path(path))
+        if not language:
+            return None
+        data = source if isinstance(source, bytes) else source.encode("utf-8")
+        return self._fingerprint_bytes(language, data)
+
+    def fingerprint_symbol(self, path: Path, source, name: str) -> Optional[str]:
+        """16-hex AST fingerprint of the symbol named `name`, located *structurally* in
+        `source` rather than by line number.
+
+        This is the base-blob side of the drift comparison: parse the whole blob, find
+        the Function/Class/Test node named `name`, and fingerprint exactly its span —
+        so a base/HEAD line shift (or unrelated edits above it) can't fool the compare.
+        Returns None (caller degrades) when the language is unknown/unparseable or the
+        name is absent or ambiguous in the blob."""
+        p = Path(path)
+        language = self.detect_language(p)
+        if not language:
+            return None
+        data = source if isinstance(source, bytes) else source.encode("utf-8")
+        try:
+            nodes, _ = self.parse_bytes(p, data)
+        except Exception:  # engine parse is best-effort; fail open, never raise
+            return None
+        cands = [
+            n
+            for n in nodes
+            if n.name == name and n.kind in ("Function", "Class", "Test")
+        ]
+        if len(cands) != 1:  # absent or ambiguous → degrade
+            return None
+        n = cands[0]
+        lines = data.split(b"\n")
+        if not (1 <= n.line_start <= n.line_end <= len(lines)):
+            return None
+        span = b"\n".join(lines[n.line_start - 1 : n.line_end])
+        return self._fingerprint_bytes(language, span)
 
     def parse_file(self, path: Path) -> tuple[list[NodeInfo], list[EdgeInfo]]:
         """Parse a single file and return extracted nodes and edges."""

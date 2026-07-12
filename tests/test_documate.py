@@ -108,8 +108,16 @@ class Base(unittest.TestCase):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def _touch(self, rel: str) -> None:
+        # appends a comment *below* the 1..1 symbol span — an unrelated in-file edit
+        # that changes the file but not the documented symbol's fingerprint.
         p = self.dir / rel
         p.write_text(p.read_text() + "\n// x\n")
+
+    def _edit_symbol(self, rel: str = "src/key.c") -> None:
+        # a real semantic change to the documented symbol's body (verify_key), so its
+        # AST fingerprint differs from base — genuine DIRECT drift (contrast _touch).
+        p = self.dir / rel
+        p.write_text(p.read_text().replace("return 1", "return 42"))
 
     def _fresh_docs(self) -> None:
         """Generate the generated tier and commit everything — a green starting state."""
@@ -135,6 +143,35 @@ class TestResolve(Base):
         ctx = Context.make(self.dir)
         r = R.resolve(ctx, "sym:do_unlock")
         self.assertTrue(r.ok and r.degraded)
+
+    def _add_node(self, name: str, rel: str) -> None:
+        con = sqlite3.connect(self.dir / ".documate" / "graph.db")
+        q = str(self.dir / rel)
+        con.execute(
+            "INSERT INTO nodes(name,kind,qualified_name,file_path,line_start,line_end)"
+            " VALUES(?,?,?,?,?,?)",
+            (name, "Function", f"{q}::{name}", q, 1, 1),
+        )
+        con.commit()
+        con.close()
+
+    def test_ambiguous_bare_sym_asks_for_path(self):
+        # a second production site for verify_key -> resolve can't choose; must ask @path,
+        # and the @path form disambiguates it.
+        self._add_node("verify_key", "src/key2.c")
+        r = R.resolve(self.ctx, "sym:verify_key")
+        self.assertFalse(r.ok)
+        self.assertIn("ambiguous", r.error)
+        self.assertIn("@path", r.error)
+        self.assertTrue(R.resolve(self.ctx, "sym:verify_key@src/key.c").ok)
+
+    def test_production_site_beats_test_mock(self):
+        # a same-named symbol in a test file (path carries a test marker) must not
+        # shadow the production definition.
+        self._add_node("verify_key", "src/key.test.c")
+        r = R.resolve(self.ctx, "sym:verify_key")
+        self.assertTrue(r.ok)
+        self.assertEqual(r.targets[0]["file"], "src/key.c")
 
 
 class TestConfig(Base):
@@ -182,12 +219,148 @@ class TestAnchors(Base):
         self.assertEqual(failed, [])
         self.assertEqual(len(degraded), 2)
 
+    def test_sig_before_sym_is_reported_bad(self):
+        # a sig with no preceding sym: can't bind — must be flagged, not silently dropped.
+        _w(
+            self.dir / "docs" / "guides" / "99.md",
+            "## B\n<!-- documents: sig:0f3a9c1b2d4e5f60 sym:verify_key -->\n",
+        )
+        failed, _ = A.validate(self.ctx)
+        self.assertTrue(any("no sym: before it" in (e or "") for _, e, _ in failed))
+
+    def test_conflicting_sigs_are_reported_bad(self):
+        # two different sigs pinning the same sym on one page would bind one wrong and
+        # never flag; scan must call it out.
+        _w(
+            self.dir / "docs" / "guides" / "99.md",
+            "## B\n<!-- documents: sym:verify_key sig:0000000000000000 -->\n"
+            "<!-- documents: sym:verify_key sig:1111111111111111 -->\n",
+        )
+        failed, _ = A.validate(self.ctx)
+        self.assertTrue(any("conflicting" in (e or "") for _, e, _ in failed))
+
+
+class TestFingerprint(Base):
+    """The AST fingerprint (Weakness-1): formatting-invariant, semantics- and literal-
+    sensitive, comment-agnostic, degrades to None. Driven through the graphdb adapter —
+    the only door to the engine's parser — so it covers every language the engine does."""
+
+    def fp(self, src, path="x.py"):
+        return self.ctx.graph.fingerprint_source(path, src)
+
+    def test_spacing_only_is_invariant(self):
+        self.assertEqual(self.fp("x=1"), self.fp("x = 1"))
+        self.assertEqual(self.fp("f( a,b )"), self.fp("f(a, b)"))
+
+    def test_reindent_and_rewrap_are_invariant(self):
+        self.assertEqual(
+            self.fp("def g():\n    if x:\n        return 1"),
+            self.fp("def g():\n  if x:\n            return 1"),
+        )
+
+    def test_blank_lines_and_trailing_ws_are_invariant(self):
+        self.assertEqual(self.fp("a = 1\nb = 2"), self.fp("a = 1   \n\n\nb = 2\n"))
+
+    def test_string_literal_contents_are_sensitive(self):
+        # the false-negative this fixes: str.split() collapsed "a  b" == "a b".
+        self.assertNotEqual(self.fp('y = "a  b"'), self.fp('y = "a b"'))
+
+    def test_numeric_literal_digits_are_sensitive(self):
+        # decision: a literal's exact characters matter -> 1_000 != 1000.
+        self.assertNotEqual(self.fp("n = 1_000"), self.fp("n = 1000"))
+
+    def test_comment_only_edit_is_invariant(self):
+        # documented default policy: comment/trivia nodes are dropped.
+        self.assertEqual(self.fp("z = 1  # hi"), self.fp("z = 1  # BYE, totally"))
+        self.assertEqual(self.fp("z = 1  # hi"), self.fp("z = 1"))
+
+    def test_signature_changes_are_sensitive(self):
+        base = "def f(x): pass"
+        self.assertNotEqual(self.fp(base), self.fp("def f(x, y): pass"))  # add param
+        self.assertNotEqual(self.fp(base), self.fp("def f(x: int): pass"))  # annotation
+        self.assertNotEqual(self.fp(base), self.fp("def f(x=1): pass"))  # default
+
+    def test_body_logic_changes_are_sensitive(self):
+        self.assertNotEqual(self.fp("r = a + b"), self.fp("r = a - b"))  # operator
+        self.assertNotEqual(self.fp("r = foo()"), self.fp("r = bar()"))  # called name
+
+    def test_degrades_to_none_never_raises(self):
+        self.assertIsNone(self.fp("code", path="x.unknownext"))  # no language
+        self.assertIsNone(D.fingerprint(self.ctx, "nope.c", 1, 1))  # unreadable file
+        self.assertIsNone(
+            D.fingerprint(self.ctx, "src/key.c", 5, 9)
+        )  # span out of range
+
+    def test_language_awareness_go(self):
+        # not Python: a second grammar the engine supports proves the fingerprint is
+        # AST-level, not text-level. Reflow invariant, operator sensitive.
+        base = self.fp("func Add(a int) int {\n\treturn a + 1\n}", path="a.go")
+        self.assertEqual(
+            base, self.fp("func Add(a int) int { return a  +  1 }", "a.go")
+        )
+        self.assertNotEqual(
+            base, self.fp("func Add(a int) int { return a - 1 }", "a.go")
+        )
+
+    def test_fingerprint_symbol_locates_by_name_not_line(self):
+        # base-blob path: a symbol shifted down by an inserted function above still
+        # fingerprints identically to its isolated form; absent name degrades to None.
+        shifted = b"int other(void){return 9;}\nint verify_key(void){return 1;}\n"
+        self.assertEqual(
+            self.ctx.graph.fingerprint_symbol("src/key.c", shifted, "verify_key"),
+            self.fp("int verify_key(void){return 1;}", path="src/key.c"),
+        )
+        self.assertIsNone(
+            self.ctx.graph.fingerprint_symbol("src/key.c", shifted, "ghost")
+        )
+
 
 class TestDrift(Base):
-    def test_direct_on_changed_documented_file(self):
-        self._touch("src/key.c")
+    def test_direct_when_documented_symbol_changes(self):
+        # the documented symbol's *body* changed -> DIRECT drift (sig-less, per-symbol).
+        self._edit_symbol()
         direct, _, _, _ = D.find_drift(self.ctx, "HEAD", 0, 500)
         self.assertTrue(any(d["module"] == "docs/guides/01-key.md" for d in direct))
+
+    def test_no_direct_when_only_other_part_of_file_changes(self):
+        # Weakness-2: an unrelated edit elsewhere in verify_key's file (a comment
+        # appended below its 1..1 span) must NOT flag the doc — file membership used to.
+        self._touch("src/key.c")
+        direct, _, _, _ = D.find_drift(self.ctx, "HEAD", 0, 500)
+        self.assertFalse(any(d["module"] == "docs/guides/01-key.md" for d in direct))
+
+    def test_no_direct_on_formatter_only_change(self):
+        # sig-less DIRECT is an AST compare: reformatting verify_key (spacing only) is
+        # not drift, even though the file changed.
+        (self.dir / "src" / "key.c").write_text(
+            "int   verify_key( void ){  return  1 ; }\n"
+        )
+        direct, _, _, _ = D.find_drift(self.ctx, "HEAD", 0, 500)
+        self.assertFalse(any(d["module"] == "docs/guides/01-key.md" for d in direct))
+
+    def test_renamed_symbol_is_a_ghost_via_validate_not_drift(self):
+        # rename verify_key in source AND drop it from the graph (what a reindex does):
+        # anchors.validate must fail the anchor; drift must NOT manufacture a fingerprint
+        # finding for an anchor that no longer resolves.
+        con = sqlite3.connect(self.dir / ".documate" / "graph.db")
+        con.execute("DELETE FROM nodes WHERE name='verify_key'")
+        con.commit()
+        con.close()
+        (self.dir / "src" / "key.c").write_text("int checks_key(void){return 1;}\n")
+        failed, _ = A.validate(self.ctx)
+        self.assertTrue(any(a == "sym:verify_key" for a, _, _ in failed))
+        direct, _, notes, _ = D.find_drift(self.ctx, "HEAD", 0, 500)
+        self.assertFalse(any(d["module"] == "docs/guides/01-key.md" for d in direct))
+        self.assertTrue(any("sym:verify_key" in n for n in notes))
+
+    def test_no_graph_degrades_to_no_gate(self):
+        # missing graph: even a real symbol change can't be verified -> no gate, notes.
+        (self.dir / ".documate" / "graph.db").unlink()
+        ctx = Context.make(self.dir)
+        self._edit_symbol()
+        direct, rippled, notes, _ = D.find_drift(ctx, "HEAD", 1, 500)
+        self.assertEqual((direct, rippled), ([], []))
+        self.assertTrue(notes)
 
     def test_clean(self):
         direct, rippled, _, _ = D.find_drift(self.ctx, "HEAD", 1, 500)
@@ -280,7 +453,7 @@ class TestCheck(Base):
 
     def test_direct_drift_gates(self):
         self._fresh_docs()
-        self._touch("src/key.c")  # appended comment: model unchanged, docs stay fresh
+        self._edit_symbol()  # verify_key's body changes; graph (hence docs) stays fresh
         self.assertEqual(CK.run(self.ctx, "HEAD"), 1)
 
     def test_ripple_does_not_gate(self):
@@ -323,7 +496,7 @@ class TestBriefs(Base):
         self.assertFalse(list(out.glob("*.md")))
 
     def test_fixed_finding_clears_its_stale_brief(self):
-        self._touch("src/key.c")
+        self._edit_symbol()
         out, _ = self._emit()
         self.assertTrue(list(out.glob("*.md")))
         _git(self.dir, "add", "-A")
@@ -338,7 +511,7 @@ class TestBriefs(Base):
         out = self.dir / ".documate" / "briefs"
         self.assertEqual(CK.run(self.ctx, "HEAD", briefs_dir=out), 0)
         self.assertEqual(json.loads((out / "briefs.json").read_text()), [])
-        self._touch("src/key.c")
+        self._edit_symbol()
         self.assertEqual(CK.run(self.ctx, "HEAD", briefs_dir=out), 1)
         index = json.loads((out / "briefs.json").read_text())
         self.assertEqual([r["kind"] for r in index], ["drift"])
@@ -395,7 +568,7 @@ class TestProseFix(Base):
 
     def test_fix_check_timeout_leaves_gate_red(self):
         self._fresh_docs()
-        self._touch("src/key.c")
+        self._edit_symbol()
         cmd = self._fake("import time\ntime.sleep(10)\n")
         rc = P.fix_check(self.ctx, "HEAD", "fake", timeout=1, cmd=cmd, yes=True)
         self.assertEqual(rc, 1)  # nothing was drafted; drift still gates

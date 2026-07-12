@@ -1,6 +1,6 @@
 # How documate keeps these docs honest
 
-<!-- documents: sym:build_model sig:cb84d624b5c33e86 sym:find_drift sig:d5ebe963c5b7d388 -->
+<!-- documents: sym:build_model sig:95937dd4a3e2d746 sym:find_drift sig:03f90c8a71972d8f -->
 
 Everything under `docs/architecture/` (plus the overview and `ARCHITECTURE.md`, the
 one-page stitch of every subsystem) is **generated**: `documate`
@@ -47,15 +47,18 @@ never clobbered.
 Pages like this one are **authored**: hand-written prose for the things a generator can't
 know (the why, the trade-offs). An authored page declares what code it describes with an
 invisible anchor comment — this page anchors `build_model` (the docs generator's core) and
-`find_drift` (the staleness detector). When either function's file changes without this
+`find_drift` (the staleness detector). When either function's *code* changes without this
 page changing too, `find_drift` reports it and `documate --check` blocks the commit: the doc
-is presumed lying until a human looks. An anchor can go one step further and pin the
-exact code the author verified the prose against — a `sig:` fingerprint of the symbol's
-source, whitespace-insensitive, right in the comment (this page's anchors carry them).
-A pinned anchor stops caring about git deltas and neighbors: it drifts exactly when
-*that symbol's* code differs from what was verified, however long ago and however the
-file around it churns, and the failure message hands you the new sig to re-pin once
-you've re-read the prose.
+is presumed lying until a human looks. That check is per-symbol, not per-file: it compares an
+**AST fingerprint** of the symbol between the merge-base and your working tree, so reindenting
+it, reformatting it, or editing an unrelated function in the same file is never mistaken for
+drift — while a changed operator, a new parameter, or even a different string literal inside
+the body always is. An anchor can go one step further and pin the exact code the author
+verified the prose against — that same fingerprint written inline as a `sig:` token (this
+page's anchors carry them). A pinned anchor stops caring about git deltas entirely: it drifts
+exactly when *that symbol's* fingerprint differs from what was verified, however long ago and
+however the file around it churns, and the failure message hands you the new sig to re-pin
+once you've re-read the prose.
 
 That's the whole contract. Generated pages can't rot because they're recomputed;
 authored pages can't rot silently because they're anchored.

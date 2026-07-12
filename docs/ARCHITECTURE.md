@@ -321,18 +321,23 @@ be lying.
     changed = (branch vs base) ∪ (working tree + staged)
 
 Two tiers:
-  DIRECT  the documented file itself changed. Gates.
-  RIPPLE  the documented file didn't change, but it calls a symbol defined in one that
-          did (graph-backed, bounded). Advisory only — never gates, silent without a
-          graph. A weaker signal shouldn't block a push.
+  DIRECT  the documented *symbol's* code changed. Gates.
+  RIPPLE  the documented symbol didn't change, but it calls a symbol defined in a file
+          that did (graph-backed, bounded). Advisory only — never gates, silent without
+          a graph. A weaker signal shouldn't block a push.
 
-git is the change oracle for sig-less anchors — no stored hashes. An anchor pinned
-with `sig:` opts out of git entirely: its verdict is a fingerprint comparison against
-the symbol's current source (per-symbol, base-ref-free, indifferent to unrelated edits
-in the same file), and a mismatch is DIRECT drift whose message carries the current
-sig so the author can re-verify the prose and re-pin. The idea is fiberplane/drift's
-AST fingerprint; the sig lives inline in the anchor instead of a lock file.
-`sym:` needs the graph and degrades without it. Stdlib only.
+Both tiers share ONE oracle: an AST fingerprint of the symbol's source (formatting-
+invariant, literal-sensitive — see `fingerprint`). A sig-less anchor compares that
+fingerprint between the merge-base and the working tree, so pure formatter churn and
+edits to *other* symbols in the same file never flag — only the documented symbol
+changing does. An anchor pinned with `sig:` compares the same fingerprint against an
+author-verified value instead of the base, and a mismatch is DIRECT drift whose message
+carries the current sig so the author can re-verify the prose and re-pin. The idea is
+fiberplane/drift's AST fingerprint; the sig lives inline in the anchor, not a lock file.
+
+git supplies the cheap pre-filter (which files differ from base) and the base blob;
+the gate *decision* for sig-less anchors is the fingerprint compare, not file
+membership. `sym:` needs the graph and degrades without it. Stdlib only.
 
 **depends on** [`src/documate/anchors.py`](architecture/src.documate.anchors.md), [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/resolve.py`](architecture/src.documate.resolve.md)  ·  **used by** [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/check.py`](architecture/src.documate.check.md)
 

@@ -37,6 +37,7 @@ class GraphDB:
         self.root = root
         self.db_path = db_path
         self.skip = skip
+        self._parser = None  # lazy CodeParser for AST fingerprints; False = unavailable
 
     # ---- build ----
     def index(self, incremental: bool = False) -> dict:
@@ -149,6 +150,32 @@ class GraphDB:
             for n in nodes
             if n.kind in ("Function", "Class", "Test")
         ]
+
+    # ---- AST fingerprints (drift gate; engine-driven, degradable) ----
+    def _code_parser(self):
+        """Lazy engine parser for fingerprinting (custom languages loaded once). Returns
+        None if tree-sitter isn't importable — the read path stays usable without the
+        heavy deps, fingerprints just degrade."""
+        if self._parser is None:
+            try:
+                from ._engine.parser import CodeParser
+
+                self._parser = CodeParser(self.root)
+            except Exception:
+                self._parser = False
+        return self._parser or None
+
+    def fingerprint_source(self, path, source) -> str | None:
+        """16-hex AST fingerprint of a source snippet in `path`'s language; None (degrade)
+        when it can't be parsed. Formatting-invariant, literal-sensitive."""
+        cp = self._code_parser()
+        return cp.fingerprint_source(path, source) if cp else None
+
+    def fingerprint_symbol(self, path, source, name: str) -> str | None:
+        """16-hex AST fingerprint of the symbol `name`, located structurally in `source`
+        (line-shift-proof, for the base blob). None when absent/ambiguous/unparseable."""
+        cp = self._code_parser()
+        return cp.fingerprint_symbol(path, source, name) if cp else None
 
     # ---- reads (all degradable) ----
     def _connect(self):

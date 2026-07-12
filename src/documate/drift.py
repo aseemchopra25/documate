@@ -8,23 +8,27 @@ be lying.
     changed = (branch vs base) ∪ (working tree + staged)
 
 Two tiers:
-  DIRECT  the documented file itself changed. Gates.
-  RIPPLE  the documented file didn't change, but it calls a symbol defined in one that
-          did (graph-backed, bounded). Advisory only — never gates, silent without a
-          graph. A weaker signal shouldn't block a push.
+  DIRECT  the documented *symbol's* code changed. Gates.
+  RIPPLE  the documented symbol didn't change, but it calls a symbol defined in a file
+          that did (graph-backed, bounded). Advisory only — never gates, silent without
+          a graph. A weaker signal shouldn't block a push.
 
-git is the change oracle for sig-less anchors — no stored hashes. An anchor pinned
-with `sig:` opts out of git entirely: its verdict is a fingerprint comparison against
-the symbol's current source (per-symbol, base-ref-free, indifferent to unrelated edits
-in the same file), and a mismatch is DIRECT drift whose message carries the current
-sig so the author can re-verify the prose and re-pin. The idea is fiberplane/drift's
-AST fingerprint; the sig lives inline in the anchor instead of a lock file.
-`sym:` needs the graph and degrades without it. Stdlib only.
+Both tiers share ONE oracle: an AST fingerprint of the symbol's source (formatting-
+invariant, literal-sensitive — see `fingerprint`). A sig-less anchor compares that
+fingerprint between the merge-base and the working tree, so pure formatter churn and
+edits to *other* symbols in the same file never flag — only the documented symbol
+changing does. An anchor pinned with `sig:` compares the same fingerprint against an
+author-verified value instead of the base, and a mismatch is DIRECT drift whose message
+carries the current sig so the author can re-verify the prose and re-pin. The idea is
+fiberplane/drift's AST fingerprint; the sig lives inline in the anchor, not a lock file.
+
+git supplies the cheap pre-filter (which files differ from base) and the base blob;
+the gate *decision* for sig-less anchors is the fingerprint compare, not file
+membership. `sym:` needs the graph and degrades without it. Stdlib only.
 """
 
 from __future__ import annotations
 
-import hashlib
 import subprocess
 from pathlib import Path
 
@@ -34,14 +38,22 @@ from .resolve import resolve
 
 
 def fingerprint(ctx: Context, rel: str, line_start, line_end) -> str | None:
-    """16-hex fingerprint of a symbol's source span, whitespace-run-insensitive.
+    """16-hex AST fingerprint of the symbol spanning lines `line_start..line_end` of `rel`.
 
-    Collapsing whitespace runs makes re-indents and re-wraps hash-stable while
-    keeping token boundaries, so `"a  b"` inside a string still differs from
-    `"a b"`. Spacing-only formatter churn (`x=1` -> `x = 1`) does flag — the
-    tool over-flags rather than silently passes a lying doc; a true syntax-tree
-    hash at index time is the upgrade path. None when the span can't be read
-    (caller degrades to a note, never gates on a broken oracle)."""
+    Reads the working-tree file, slices the span, and hands it to the graph adapter,
+    which parses it with the indexing engine and serialises the syntax tree. The digest
+    is invariant to reindentation, re-wrapping, blank lines, trailing whitespace, and
+    spacing-only edits (`x=1` == `x = 1`, `f( a,b )` == `f(a, b)`), but sensitive to
+    signatures, control flow, operators, called names, and the exact contents of
+    string/char/numeric literals (`"a  b"` != `"a b"`, `1_000` != `1000`). A comment-only
+    edit does NOT change it (the engine drops comment/trivia nodes by default). None when
+    the span can't be read or parsed — the caller degrades to a note and never gates on a
+    broken oracle.
+
+    Same 16-hex shape as before, so committed `sig:` pins keep their *format*. The
+    algorithm changed (was a whitespace-collapsed line hash, which both over-flagged
+    `x=1`->`x = 1` and silently missed edits inside string literals), so existing pin
+    *values* changed once — re-pin from the sig `documate --check` prints."""
     try:
         lines = (ctx.root / rel).read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError):
@@ -52,8 +64,8 @@ def fingerprint(ctx: Context, rel: str, line_start, line_end) -> str | None:
         or not (1 <= line_start <= line_end <= len(lines))
     ):
         return None
-    norm = " ".join("\n".join(lines[line_start - 1 : line_end]).split())
-    return hashlib.blake2b(norm.encode("utf-8"), digest_size=8).hexdigest()
+    span = "\n".join(lines[line_start - 1 : line_end])
+    return ctx.graph.fingerprint_source(rel, span)
 
 
 def _git(ctx: Context, *args: str) -> list[str]:
@@ -62,6 +74,23 @@ def _git(ctx: Context, *args: str) -> list[str]:
         ["git", "-C", str(ctx.root), *args], capture_output=True, text=True
     )
     return [ln for ln in out.stdout.splitlines() if ln.strip()]
+
+
+def _merge_base(ctx: Context, base: str) -> str:
+    """The base<->HEAD merge-base — the "before" snapshot the change set diffs against,
+    and where the sig-less fingerprint compare reads the symbol's old source. Falls back
+    to HEAD when there is no merge-base (base is an ancestor of / equals HEAD)."""
+    mb = _git(ctx, "merge-base", base, "HEAD")
+    return mb[0] if mb else "HEAD"
+
+
+def _show(ctx: Context, ref: str, rel: str) -> bytes | None:
+    """Raw bytes of `rel` at `ref` (`git show ref:rel`), or None when it didn't exist
+    there (a file newly added since base) or git errors."""
+    out = subprocess.run(
+        ["git", "-C", str(ctx.root), "show", f"{ref}:{rel}"], capture_output=True
+    )
+    return out.stdout if out.returncode == 0 else None
 
 
 def changed_files(ctx: Context, base: str) -> set[str]:
@@ -130,9 +159,47 @@ def _collapse(rows: list[dict]) -> list[dict]:
     return sorted(out, key=lambda r: r["module"])
 
 
+def _symbol_drifted(
+    ctx: Context,
+    mb: str,
+    base: str,
+    rel: str,
+    name,
+    line,
+    line_end,
+    anchor: str,
+    notes: list[str],
+) -> bool:
+    """Did the documented symbol's code change between `mb` and the working tree?
+
+    Compares the symbol's AST fingerprint on each side: the working span (by its current
+    line range) against the same symbol located *by name* in the base blob (line-shift
+    proof). Formatter-only churn and edits to other symbols in the file therefore don't
+    flag. Degrades to a note (returns False) when either side can't be read/parsed — a
+    broken oracle never gates."""
+    cur = fingerprint(ctx, rel, line, line_end)
+    if cur is None:
+        notes.append(f"{anchor}: working span unreadable ({rel})")
+        return False
+    blob = _show(ctx, mb, rel)
+    if blob is None:
+        notes.append(
+            f"{anchor}: {name} has no source at {base} (new since base) — not compared"
+        )
+        return False
+    old = ctx.graph.fingerprint_symbol(rel, blob, name)
+    if old is None:
+        notes.append(
+            f"{anchor}: {name} absent/unparseable in {rel} at {base} — not compared"
+        )
+        return False
+    return old != cur
+
+
 def find_drift(ctx: Context, base: str, ripple_hops: int, ripple_cap: int):
     """Return (direct rows, ripple rows, notes, truncated), deduped by (page, file)."""
     changed = changed_files(ctx, base)
+    mb = _merge_base(ctx, base)  # the "before" snapshot for sig-less symbol compares
     index, sigs, _ = scan(ctx)  # bad sig tokens are anchors.validate's failure
     ripple, truncated = dependent_files(ctx, changed, ripple_hops, ripple_cap)
     direct: list[dict] = []
@@ -167,12 +234,24 @@ def find_drift(ctx: Context, base: str, ripple_hops: int, ripple_cap: int):
                             {"anchor": anchor, "file": f, "module": m, "sig": cur}
                         )
                     continue
+                if m in changed:
+                    continue  # author touched the doc alongside the code — not drift
                 if f in changed:
-                    bucket = direct
+                    # sig-less DIRECT: compare the documented *symbol* base->worktree,
+                    # not the whole file — formatter churn and edits to other symbols
+                    # in the same file don't flag.
+                    if _symbol_drifted(
+                        ctx,
+                        mb,
+                        base,
+                        f,
+                        tgt.get("symbol"),
+                        tgt.get("line"),
+                        tgt.get("line_end"),
+                        anchor,
+                        notes,
+                    ):
+                        direct.append({"anchor": anchor, "file": f, "module": m})
                 elif f in ripple:
-                    bucket = rippled
-                else:
-                    continue
-                if m not in changed:
-                    bucket.append({"anchor": anchor, "file": f, "module": m})
+                    rippled.append({"anchor": anchor, "file": f, "module": m})
     return _collapse(direct), _collapse(rippled), notes, truncated
