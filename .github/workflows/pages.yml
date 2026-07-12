@@ -1,0 +1,40 @@
+name: docs-site
+
+# Publish the `documate --html` site to GitHub Pages. Works for private repos too.
+# Enable once, then trigger from the Actions tab (or add a `push:` trigger below):
+#   repo Settings -> Pages -> Source: "GitHub Actions".
+on:
+  workflow_dispatch:
+  # push:            # uncomment to auto-publish on every push to main
+  #   branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # hotspots/evidence read git history
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - run: documate --html .
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

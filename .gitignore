@@ -1,0 +1,16 @@
+.venv/
+.documate/
+site/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+node_modules/
+*.tsbuildinfo
+.claude/worktrees/
+tmp/
+.coverage
+coverage/
+.pytest_cache/
+CLAUDE.md

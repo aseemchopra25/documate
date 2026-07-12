@@ -1,0 +1,11 @@
+# Lets other repos consume documate via the `pre-commit` framework:
+#   - repo: https://github.com/<you>/documate
+#     rev: v0.2.0
+#     hooks: [{ id: documate }]
+- id: documate
+  name: documate (self-healing docs + gate)
+  description: Regenerate the generated docs tier and gate it — fails if pages changed (re-commit with fresh docs), an anchor is dead, or an authored doc lies about changed code.
+  entry: documate
+  language: python
+  pass_filenames: false
+  always_run: true

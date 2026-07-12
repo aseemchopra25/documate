@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# documate pre-commit — self-healing docs + the gate, one invocation.
+#
+# Install (from your repo root):
+#   git config core.hooksPath path/to/documate/hooks
+# or symlink/copy this file to .git/hooks/pre-commit and `chmod +x` it. Works with the
+# `pre-commit` framework too (see .pre-commit-hooks.yaml).
+#
+# Bare `documate` regenerates the generated tier from the working tree and then gates
+# it. Freshness passes by construction (the pages were just written), so what can
+# still block is what a regeneration can't fix: a dead anchor, or an authored page
+# describing code this commit changes without being updated itself (DIRECT drift;
+# RIPPLE is advisory and never blocks). On a pass, the regenerated pages are staged
+# into this commit — generated docs cannot go stale in the repo. (They describe the
+# working tree: with a partially staged commit they may run slightly ahead of what
+# you're committing, never behind.)
+#
+# If `documate` isn't on PATH this no-ops with a hint instead of wedging your commit.
+set -euo pipefail
+
+if ! command -v documate >/dev/null 2>&1; then
+  echo "documate: not installed, skipping docs gate (pip install documate)" >&2
+  exit 0
+fi
+
+# Where the generated tier lives — matches the docs_dir config key (default "docs").
+docs_dir="${DOCUMATE_DOCS_DIR:-docs}"
+
+# Base to diff against: configurable, defaults to the upstream of the current branch,
+# falling back to the repo's default branch. Override with DOCUMATE_BASE.
+base="${DOCUMATE_BASE:-}"
+if [ -z "$base" ]; then
+  base="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
+fi
+[ -z "$base" ] && base="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || echo main)"
+
+documate --base "$base"
+git add -- "$docs_dir/README.md" "$docs_dir/architecture" 2>/dev/null || true

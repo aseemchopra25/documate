@@ -1,0 +1,3 @@
+{
+  "skip_dirs": ["/build/", "/node_modules/", "/vendor/", "/.git/", "/.documate/", "/_engine/"]
+}

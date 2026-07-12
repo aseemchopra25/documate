@@ -1,0 +1,29 @@
+name: ci
+
+# Run the suite on every push/PR, and dogfood documate on its own docs — if our own
+# docs can go stale unnoticed, we have no business shipping a docs engine.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # the drift gate needs history to diff against the base
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: install
+        run: pip install -e .
+      - name: unit tests
+        run: python -m unittest discover -s tests -v
+      - name: dogfood — the gate on our own docs
+        run: documate --check --base "${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD' }}"

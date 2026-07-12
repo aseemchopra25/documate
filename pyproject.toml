@@ -1,0 +1,47 @@
+[project]
+name = "documate"
+version = "0.2.0"
+description = "Tie docs to the code they describe, and yell when one moves without the other. Plugs into any repo."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Aseem Chopra" }]
+keywords = ["documentation", "drift", "knowledge-graph", "tree-sitter", "docs-as-code"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Documentation",
+    "Topic :: Software Development :: Quality Assurance",
+]
+
+# The indexing engine (src/documate/_engine, first-party — see its ORIGIN.md) needs
+# these. watchdog is deliberately omitted: it's a lazy import on the file-watch path
+# we don't ship. rich is the presentation layer (every line the tool prints, via
+# ui.py) and rich-argparse the help screens. Everything else in documate is stdlib.
+# The engine targets tree-sitter-language-pack <1, and the 1.x major bump changes the
+# parser API enough to break it ('bytes' is not 'str'). Pinned until we port the
+# engine to 1.x.
+dependencies = [
+    "tree-sitter>=0.23.0,<1",
+    "tree-sitter-language-pack>=0.3.0,<1",
+    "networkx>=3.2,<4",
+    "rich>=13,<15",
+    "rich-argparse>=1.5,<2",
+    "tomli; python_version < '3.11'",
+]
+
+[project.scripts]
+documate = "documate.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/documate"]
