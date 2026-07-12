@@ -10,11 +10,18 @@ reference and the source of truth for what that script does.
 ./release.sh 0.2.3      # bump, test, build, verify, confirm, publish, tag
 ```
 
-Safety guards so it can't fire by accident: it refuses to run outside an
-interactive terminal (no cron, CI, or piped input reaches any step — it exits
-before it tests, commits, or builds), and before the irreversible upload it makes
-you **type the exact version**, not just `y`, so `yes |` or a reflex Enter can't
-publish. Everything before that prompt is safe to abort.
+Safety guards, so it never fires by accident and never runs without you:
+
+- **Interactive terminal only** — no cron, CI, or piped input reaches any step;
+  it exits before it checks PyPI or touches git.
+- **PyPI collision check** — it queries PyPI first and cancels if the target
+  version is already published (versions are immutable; you can't reuse one).
+- **Go/no-go before any work** — it prints the plan (current → target) and waits
+  for `y`; answer anything else and nothing happens.
+- **Type-the-version before upload** — the irreversible step needs the exact
+  version typed, not `y`, so `yes |` or a reflex Enter can't publish.
+
+Everything before the upload is safe to abort.
 
 ## Manual steps
 
