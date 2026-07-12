@@ -10,8 +10,11 @@ reference and the source of truth for what that script does.
 ./release.sh 0.2.3      # bump, test, build, verify, confirm, publish, tag
 ```
 
-It pauses for a `y/N` confirmation before the irreversible upload — everything
-before that point is safe to abort.
+Safety guards so it can't fire by accident: it refuses to run outside an
+interactive terminal (no cron, CI, or piped input reaches any step — it exits
+before it tests, commits, or builds), and before the irreversible upload it makes
+you **type the exact version**, not just `y`, so `yes |` or a reflex Enter can't
+publish. Everything before that prompt is safe to abort.
 
 ## Manual steps
 
