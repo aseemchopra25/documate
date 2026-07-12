@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/documate-intro.webp" alt="documate generating a repository's docs and gating them from the terminal" width="640">
+  <img src="https://raw.githubusercontent.com/aseemchopra25/documate/main/.github/documate-intro.webp" alt="documate generating a repository's docs and gating them from the terminal" width="640">
 </p>
 
 # documate

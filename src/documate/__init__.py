@@ -10,4 +10,4 @@ Public surface is the CLI; the modules (core, docs, check, anchors, resolve, dri
 extract, graphdb, config) are importable for embedding.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
