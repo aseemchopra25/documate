@@ -183,6 +183,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip the --ai pre-flight confirmation (unattended runs / CI)",
     )
     p.add_argument(
+        "--rewrite",
+        action="store_true",
+        help="with --ai: re-emit every C/C++ doc comment as Doxygen (/** */ + "
+        "@brief/@param/@return) — the marker Doxygen reads; drafts land uncommitted",
+    )
+    p.add_argument(
         "--html",
         action="store_true",
         help="also render the static HTML site (default: site/, gitignored)",
@@ -256,6 +262,8 @@ def _dispatch(args) -> int:
             return prose.fix_check(ctx, args.base, args.ai, yes=args.yes)
         return check.run(ctx, args.base, briefs_dir=bdir)
     if args.ai:
+        if args.rewrite:  # re-emit C/C++ docs as Doxygen; no seed/gate chaining
+            return prose.fix_rewrite(ctx, args.ai, yes=args.yes)
         # Seed every missing docstring first; a clean pass hands the gate to
         # fix_check, which repairs any drift findings and returns the re-run
         # gate's verdict. A failed seed stops here — its rc is the honest one.
@@ -303,6 +311,11 @@ def main(argv=None) -> int:
             parser.error(
                 "--watch --ai would call the model on every save — "
                 "run --ai as a deliberate one-shot instead"
+            )
+        if args.rewrite and (not args.ai or args.check):
+            parser.error(
+                "--rewrite drives the model over your whole repo — run it as "
+                "`documate --ai <model> --rewrite`, not with --check"
             )
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 0

@@ -35,6 +35,10 @@ _SRC_CAP = 400  # lines of symbol source in a brief — a work order, not a repo
 _DIFF_CAP = 200  # lines of diff context
 _XREF_CAP = 8  # callers/callees quoted per brief, matching the docs pages
 
+#: C-family suffixes the --rewrite scope targets: their doc tool is Doxygen, which
+#: ignores plain `//` — the rewrite re-emits every one as a `/** */` block.
+_CFAMILY = (".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh", ".m", ".mm")
+
 
 def _slug(text: str) -> str:
     """A filename-safe slug for a page/symbol path (`docs/guides/a.md` -> `docs-guides-a.md`)."""
@@ -307,6 +311,65 @@ def _undoc_briefs(
     return out
 
 
+def _rewrite_briefs(ctx: Context, xrefs: tuple, tested: dict) -> list[tuple[str, dict]]:
+    """(text, index row) per C-family Function/Class — the `--rewrite` scope. Every
+    C/C++ symbol gets a work order to (re)write its doc comment as Doxygen: the
+    current doc (when any) and the source are quoted so the model improves on what's
+    there rather than inventing. Rows sort by (file, line) so the inserter, running a
+    file's symbols top-to-bottom, keeps its line-shift bookkeeping coherent. Empty
+    without a graph or without C sources."""
+    cand = [
+        s
+        for s in ctx.graph.symbols()
+        if Path(s["file"]).suffix in _CFAMILY
+        and not docs._skip(ctx, ctx.rel(s["file"]))
+        and not docs._machine_generated(Path(s["file"]))
+    ]
+    out: list[tuple[str, dict]] = []
+    for s in sorted(cand, key=lambda s: (s["file"], s["line"] or 0)):
+        rel = ctx.rel(s["file"])
+        node = next(
+            (
+                r
+                for r in ctx.graph.nodes_by_name(s["name"]) or []
+                if r[0] == s["qualified"]
+            ),
+            None,
+        )
+        line, line_end = (node[2], node[3]) if node else (s["line"], None)
+        prose = extract.extract(
+            Path(s["file"]),
+            [{"qualified": s["qualified"], "line": line, "kind": s["kind"]}],
+        )
+        pair = prose.get(extract.short(s["qualified"]))
+        cur = pair[1] if pair else None
+        parts = [
+            "# Work order: rewrite as Doxygen documentation\n\n"
+            f"`{extract.short(s['qualified'])}` ({s['kind']}) in `{rel}`. (Re)write its "
+            f"doc comment at line {line} as Doxygen — a `@brief` line, then one "
+            "`@param <name>` per parameter and a `@return` when it returns a value — "
+            "improving on any current doc below; only what the source proves, never invented."
+        ]
+        if cur:
+            parts.append("## Current documentation\n\n" + _fence("text", cur))
+        src = _span(ctx, rel, line, line_end)
+        if src:
+            parts.append(
+                f"## The code ({rel} lines {line}-{line_end})\n\n"
+                + _fence(Path(rel).suffix.lstrip("."), src)
+            )
+        parts += _tail_sections(ctx, s["qualified"], xrefs, tested)
+        meta = {
+            "kind": "rewrite",
+            "symbol": extract.short(s["qualified"]),
+            "file": rel,
+            "line": line,
+            "line_end": line_end,
+        }
+        out.append(("\n\n".join(parts) + "\n", meta))
+    return out
+
+
 def _module_briefs(ctx: Context) -> list[tuple[str, dict]]:
     """(text, index row) per module with no module-level prose — the top-of-file
     doc each architecture-page section leads with. Seeding-scope only: module
@@ -378,27 +441,32 @@ def emit(
     direct: list[dict],
     out_dir: Path,
     undocumented: str = "changed",
+    rewrite: bool = False,
 ) -> list[dict]:
     """Write one work-order file per finding into `out_dir` plus a `briefs.json`
     index (the machine-readable half), clearing briefs from earlier runs first so a
     fixed finding can't linger as stale work. `undocumented` picks the doc-drafting
     scope: 'changed' (vs base — the check path) or 'all' (every graph symbol — the
-    fresh-repo seeding path). Returns the index rows; a green repo returns [] and
-    the directory holds only an empty index — the wrapper's definitive 'nothing to
-    do'."""
+    fresh-repo seeding path). `rewrite` swaps all of that for the C-family rewrite
+    scope: one work order per C/C++ symbol to re-emit its doc comment as Doxygen.
+    Returns the index rows; a green repo returns [] and the directory holds only an
+    empty index — the wrapper's definitive 'nothing to do'."""
     out_dir.mkdir(parents=True, exist_ok=True)
     for old in out_dir.glob("*.md"):
         old.unlink()
     xrefs = _xrefs(ctx)
     tested = docs._tested(ctx, ctx.graph.symbols())
     orders: list[tuple[str, dict]] = []
-    for row in direct:
-        got = _drift_brief(ctx, base, row, xrefs, tested)
-        if got:
-            orders.append(got)
-    orders += _undoc_briefs(ctx, base, xrefs, tested, undocumented)
-    if undocumented == "all":  # module prose is seeded, never diff-driven
-        orders += _module_briefs(ctx)
+    if rewrite:
+        orders += _rewrite_briefs(ctx, xrefs, tested)
+    else:
+        for row in direct:
+            got = _drift_brief(ctx, base, row, xrefs, tested)
+            if got:
+                orders.append(got)
+        orders += _undoc_briefs(ctx, base, xrefs, tested, undocumented)
+        if undocumented == "all":  # module prose is seeded, never diff-driven
+            orders += _module_briefs(ctx)
     index: list[dict] = []
     for text, meta in orders:
         name = f"{meta['kind']}--{_slug(meta.get('page') or meta['file'])}--{_slug(meta['symbol'])}.md"

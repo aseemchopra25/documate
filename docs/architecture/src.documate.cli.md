@@ -82,7 +82,7 @@ dependency). The three modes come first, overrides after.
 **called by** `main`
 
 ### `_scaffold(ctx: Context) -> None`
-`src/documate/cli.py:219`
+`src/documate/cli.py:225`
 
 `--init`: write the starter config, then teach the ignore defaults so the
 user knows what's already skipped before they add to it. Never clobbers an
@@ -93,7 +93,7 @@ follow see exactly what they would have without it.
 **called by** `_dispatch`
 
 ### `_dispatch(args) -> int`
-`src/documate/cli.py:236`
+`src/documate/cli.py:242`
 
 Route one parsed invocation: index first (every mode reads the graph), then
 the mode — gate only (--check), the model layer (--ai), or the default job:
@@ -103,7 +103,7 @@ gate on purpose: it's a dev loop, and gating every save would be noise.
 **called by** `main`  ·  **calls** `_index`, `_scaffold`, `_watch`
 
 ### `main(argv=None) -> int`
-`src/documate/cli.py:275`
+`src/documate/cli.py:283`
 
 Console entry point: parse argv, dispatch, return the exit code.
 

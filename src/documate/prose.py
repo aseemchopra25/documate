@@ -188,26 +188,41 @@ def _context(text: str) -> str:
 
 
 def _batch_prompt(rows: list[dict], briefs_dir: Path) -> str:
-    """One prompt covering a chunk of undocumented-symbol work orders: shared
-    output-only instructions, then each brief's evidence under a numbered
-    heading. The reply format is rigid so parsing can be too."""
-    head = (
-        "# Work orders: write docstrings\n\n"
-        f"Below are {len(rows)} work orders, one per undocumented symbol or module. "
-        "For each, "
-        "write the docstring text: what it does and any contract a caller must know "
-        "— only what the shown code proves, never invented. First line = one-sentence "
-        "summary; add more lines only when a caller needs them. Output PLAIN TEXT "
-        "only — no quotes, no code fences, no comment markers; the caller inserts it "
-        "into the file. Reply with exactly one block per work order, in order, in "
-        "this exact format and nothing else:\n\n"
-        "<<<doc 1>>>\n<docstring text for work order 1>\n<<<end>>>"
-    )
-    if any(r["file"].endswith(".go") for r in rows):
-        head += (
-            "\n\nFor symbols in .go files, begin the first line with the symbol's "
-            "name (Go doc convention)."
+    """One prompt covering a chunk of work orders: shared output-only instructions,
+    then each brief's evidence under a numbered heading. A rewrite chunk (C-family)
+    asks for a Doxygen body instead; either reply format is rigid so parsing can be
+    too."""
+    if any(r.get("kind") == "rewrite" for r in rows):
+        head = (
+            "# Work orders: rewrite as Doxygen documentation\n\n"
+            f"Below are {len(rows)} work orders, one per C/C++ symbol. For each, write "
+            "an improved Doxygen doc-comment BODY: first line "
+            "`@brief <one-sentence summary>`; then, when the code shows them, one "
+            "`@param <name> <description>` per parameter and a `@return <description>` "
+            "— only what the shown code and current doc prove, never invented. Output "
+            "the body as PLAIN TEXT: no `/**`, no `*/`, no leading `*`, no code fences "
+            "— the caller wraps it in a /** */ block. Reply with exactly one block per "
+            "work order, in order, in this exact format and nothing else:\n\n"
+            "<<<doc 1>>>\n@brief ...\n<<<end>>>"
         )
+    else:
+        head = (
+            "# Work orders: write docstrings\n\n"
+            f"Below are {len(rows)} work orders, one per undocumented symbol or module. "
+            "For each, "
+            "write the docstring text: what it does and any contract a caller must know "
+            "— only what the shown code proves, never invented. First line = one-sentence "
+            "summary; add more lines only when a caller needs them. Output PLAIN TEXT "
+            "only — no quotes, no code fences, no comment markers; the caller inserts it "
+            "into the file. Reply with exactly one block per work order, in order, in "
+            "this exact format and nothing else:\n\n"
+            "<<<doc 1>>>\n<docstring text for work order 1>\n<<<end>>>"
+        )
+        if any(r["file"].endswith(".go") for r in rows):
+            head += (
+                "\n\nFor symbols in .go files, begin the first line with the symbol's "
+                "name (Go doc convention)."
+            )
     parts = [head]
     for n, row in enumerate(rows, 1):
         body = _context((briefs_dir / row["brief"]).read_text(encoding="utf-8"))
@@ -306,6 +321,8 @@ def _insert(
     success."""
     if row["kind"] == "module":
         return _insert_module(ctx, row, text, shifts or {})
+    if row["kind"] == "rewrite":
+        return _rewrite_above(ctx, row, text, shifts if shifts is not None else {})
     if row["file"].endswith(".go"):
         return _insert_go(ctx, row, text)
     if row["file"].endswith(".py"):
@@ -324,6 +341,111 @@ def _comment(text: str, ind: str, prefix: str = "//") -> str:
             ln = ln[len(prefix) :].strip()
         block += f"{ind}{prefix} {ln}".rstrip() + "\n"
     return block
+
+
+def _doxygen_block(text: str, ind: str) -> str | None:
+    """`text` as a Doxygen `/** ... */` block at `ind`entation — the marker Doxygen
+    reads, unlike the plain `//` other doc-above inserts use. Any wrapper the model
+    added despite instructions (`/**`, `*/`, a leading `*`) is stripped so markers
+    can't double up; a blank interior line becomes a lone ` *`. None when nothing
+    but markers survives — an empty `/** */` would read as undocumented."""
+    body: list[str] = []
+    for ln in text.splitlines():
+        ln = ln.strip()
+        if ln in ("/**", "/*", "*/"):
+            continue
+        if ln.startswith("/**"):
+            ln = ln[3:].strip()
+        ln = ln.removeprefix("/*").removesuffix("*/").strip()
+        if ln.startswith("*"):
+            ln = ln[1:].strip()
+        body.append(ln)
+    while body and not body[0]:
+        body.pop(0)
+    while body and not body[-1]:
+        body.pop()
+    if not body:
+        return None
+    block = f"{ind}/**\n"
+    for ln in body:
+        block += f"{ind} * {ln}".rstrip() + "\n"
+    block += f"{ind} */\n"
+    return block
+
+
+def _doc_span(lines: list[str], decl_idx: int) -> tuple[int, int] | None:
+    """(start, end) 0-indexed inclusive of the doc-comment block immediately above
+    `decl_idx` — exactly the lines `extract.doc_above` reads as the doc — or None
+    when nothing documentable sits there. Mirrors doc_above's block detection so a
+    rewrite replaces precisely what the extractor (and the gate) counts as the doc,
+    hopping the same annotation/attribute lines wedged between doc and declaration."""
+    i = decl_idx - 1
+    while i >= 0:
+        s = lines[i].strip()
+        if not s:
+            return None
+        if s.startswith("@") or s.startswith("#["):
+            i -= 1
+            continue
+        break
+    if i < 0:
+        return None
+    end = i
+    if lines[end].strip().endswith("*/"):  # /* ... */ or /** ... */ block
+        while i >= 0 and "/*" not in lines[i]:
+            i -= 1
+        return (i, end) if i >= 0 else None
+    if lines[end].strip().startswith("//"):  # // /// //! line run
+        while i >= 0 and lines[i].strip().startswith("//"):
+            i -= 1
+        return (i + 1, end)
+    return None
+
+
+def _rewrite_above(ctx: Context, row: dict, text: str, shifts: dict) -> str | None:
+    """Replace (or, when absent, insert) the Doxygen doc comment above a C-family
+    declaration. Locates the decl by its recorded line — shift-corrected for earlier
+    rewrites in this run — confirmed by the symbol's name on (or within two lines of)
+    the landing line; swaps the existing doc block found by `_doc_span` for a fresh
+    `/** */` block, or inserts one when there's no doc there yet (a symbol documented
+    only on its header prototype). Nothing is written when the decl can't be located
+    or the draft is empty."""
+    name = row["symbol"].split(".")[-1]
+    path = ctx.root / row["file"]
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    except (OSError, UnicodeDecodeError) as e:
+        return str(e)
+    at = row.get("line")
+    if not isinstance(at, int):
+        return "no recorded line"
+    off = sum(n for pos, n in shifts.get(row["file"], ()) if pos <= at)
+    word = re.compile(rf"\b{re.escape(name)}\b")
+    i = next(
+        (
+            j
+            for j in (at - 1 + off, at + off, at - 2 + off, at + 1 + off)
+            if 0 <= j < len(lines) and word.search(lines[j])
+        ),
+        None,
+    )
+    if i is None:
+        return "definition not found"
+    block = _doxygen_block(text, re.match(r"\s*", lines[i]).group(0))
+    if block is None:
+        return "empty draft"
+    span = _doc_span(lines, i)
+    if span is not None:
+        start, end = span
+        removed = end - start + 1
+        lines[start : end + 1] = [block]
+        delta = block.count("\n") - removed
+    else:
+        lines.insert(i, block)
+        delta = block.count("\n")
+    path.write_text("".join(lines), encoding="utf-8")
+    shifts.setdefault(row["file"], []).append((at, delta))
+    return None
 
 
 def _insert_module(
@@ -761,14 +883,14 @@ def _totals_line(totals: dict, spend: _Spend) -> None:
 
 
 def _split(index: list[dict]) -> tuple[list[dict], list[dict]]:
-    """(batchable, agentic) work orders: undocumented symbols and modules in
-    any language documate can insert into deterministically (Python, Go, and
-    every doc-above comment language) take the single-turn batched path;
-    drift repairs and anything else keep the in-place agent."""
+    """(batchable, agentic) work orders: undocumented symbols, modules, and
+    C-family rewrites in any language documate can insert into deterministically
+    (Python, Go, and every doc-above comment language) take the single-turn batched
+    path; drift repairs and anything else keep the in-place agent."""
     batch = [
         r
         for r in index
-        if r["kind"] in ("undocumented", "module")
+        if r["kind"] in ("undocumented", "module", "rewrite")
         and (r["file"].endswith(".py") or _comment_prefix(r["file"]) is not None)
     ]
     keep = {id(r) for r in batch}
@@ -1096,4 +1218,46 @@ def fix_docs(
     remaining = briefs.emit(ctx, ctx.config.default_base, [], bdir, undocumented="all")
     if remaining:
         ui.warn(f"fix: {len(remaining)} symbol(s) still undocumented")
+    return 1 if failures else 0
+
+
+def fix_rewrite(
+    ctx: Context,
+    model: str,
+    timeout: int = _TIMEOUT,
+    cmd: list[str] | None = None,
+    yes: bool = False,
+) -> int:
+    """`documate --ai <model> --rewrite`: re-emit every C/C++ symbol's doc comment
+    as Doxygen (`/** */` with `@brief`/`@param`/`@return`) — the marker Doxygen reads,
+    unlike the plain `//` seeding writes. Generate the pages, show the pre-flight plan
+    and get consent, draft each rewrite (existing docs replaced in place, undocumented
+    ones seeded), then regenerate so the pages reflect the new prose. Nonzero when any
+    draft failed (or consent was impossible unattended); declining is a clean exit-0
+    no-op. The drafts are uncommitted edits awaiting review."""
+    rc = docs.run(ctx)
+    if rc != 0:
+        return rc
+    bdir = ctx.root / ".documate" / "briefs"
+    index = briefs.emit(ctx, ctx.config.default_base, [], bdir, rewrite=True)
+    if not index:
+        ui.ok("fix: no C/C++ symbols to rewrite")
+        return 0
+    capped = _capped(index)
+    go = _preflight(ctx, capped, bdir, model, yes)
+    if go is None:
+        return 1
+    if not go:
+        return 0
+    ui.header(f"fix: rewriting {len(capped)} doc comment(s) with {model}")
+    spend = _Spend()
+    failures = 0
+    try:
+        failures += _draft_batch(ctx, capped, bdir, model, timeout, cmd, spend)
+    except KeyboardInterrupt:
+        return _interrupted()
+    finally:  # the --stats bill: even an interrupted run's tokens were spent
+        stats.add_spend(ctx, model, spend.tokens, spend.usd)
+    _reindex(ctx)
+    docs.run(ctx, quiet=True)
     return 1 if failures else 0

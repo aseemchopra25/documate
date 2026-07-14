@@ -655,6 +655,12 @@ class TestCliOneCommand(unittest.TestCase):
     def test_watch_with_ai_is_refused(self):
         self.assertEqual(self._rc(["--watch", "--ai"]), 2)
 
+    def test_rewrite_requires_ai_and_rejects_check(self):
+        self.assertFalse(self._parse([]).rewrite)
+        self.assertTrue(self._parse(["--ai", "sonnet", "--rewrite"]).rewrite)
+        self.assertEqual(self._rc(["--rewrite"]), 2)  # --rewrite needs --ai
+        self.assertEqual(self._rc(["--check", "--ai", "--rewrite"]), 2)
+
     def test_check_with_watch_or_html_is_refused(self):
         self.assertEqual(self._rc(["--check", "--watch"]), 2)
         self.assertEqual(self._rc(["--check", "--html"]), 2)
@@ -1595,6 +1601,114 @@ class TestProseSeed(RealGraph):
         self.assertEqual(rc, 130)  # conventional SIGINT code, no traceback
         self.assertIn("interrupted", buf.getvalue())
         self.assertIn("git diff", buf.getvalue())  # partial drafts stay reviewable
+
+
+class TestProseRewrite(RealGraph):
+    """`--ai --rewrite`: re-emit every C/C++ doc comment as Doxygen. The batched
+    path drafts a `@brief`/`@param` body; documate replaces the existing comment
+    block (or seeds an undocumented symbol) with a `/** */` block — the marker
+    Doxygen reads, unlike the plain `//` seeding writes."""
+
+    def _crc(self):
+        _w(
+            self.dir / "src" / "crc.c",
+            "#include <stdint.h>\n\n"
+            "// old summary\n"
+            "int crc32(const uint8_t *buf) {\n"
+            "    return 0;\n"
+            "}\n\n"
+            "int seedless(int x) {\n"
+            "    return x;\n"
+            "}\n",
+        )
+        _git(self.dir, "add", "-A")
+        self.ctx.graph.index(incremental=True)
+
+    # a scripted stand-in model speaking the batch protocol: one Doxygen `@brief`
+    # body per numbered work order (the `{body}` is spliced in per test)
+    _MODEL = (
+        "import re, sys\n"
+        "prompt = sys.stdin.read()\n"
+        'assert "Doxygen" in prompt\n'
+        'for n, _ in re.findall(r"## Work order (\\d+): `([^`]+)`", prompt):\n'
+        '    print(f"<<<doc {n}>>>")\n'
+        "__BODY__"
+        '    print("<<<end>>>")\n'
+    )
+
+    def _rewrite(self, body: str | None = None):
+        import contextlib
+        import io
+        import sys
+
+        if body is None:
+            body = (
+                '    print("@brief Computes a checksum.")\n'
+                '    print("@param buf input bytes")\n'
+                '    print("@return the checksum")\n'
+            )
+        script = self.dir / "fake_model.py"
+        script.write_text(self._MODEL.replace("__BODY__", body))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = P.fix_rewrite(
+                self.ctx, "fake", cmd=[sys.executable, str(script)], yes=True
+            )
+        return rc, buf.getvalue()
+
+    def test_rewrite_briefs_scope_is_c_family_only(self):
+        self._crc()
+        out = self.dir / ".documate" / "briefs"
+        index = BR.emit(self.ctx, "HEAD", [], out, rewrite=True)
+        syms = {r["symbol"] for r in index}
+        self.assertEqual(syms, {"crc32", "seedless"})  # C only
+        self.assertNotIn("helper", syms)  # the Python fixtures are out of scope
+        self.assertTrue(all(r["kind"] == "rewrite" for r in index))
+        # the current doc is quoted so the model improves, not invents
+        crc_brief = next(r for r in index if r["symbol"] == "crc32")
+        self.assertIn("old summary", (out / crc_brief["brief"]).read_text())
+
+    def test_rewrite_replaces_and_seeds_as_doxygen(self):
+        self._crc()
+        rc, shown = self._rewrite()
+        self.assertEqual(rc, 0)
+        src = (self.dir / "src" / "crc.c").read_text()
+        self.assertEqual(src.count("/**"), 2)  # both symbols now Doxygen
+        self.assertIn(" * @brief Computes a checksum.", src)
+        self.assertIn(" */\nint crc32(const uint8_t *buf)", src)  # block above decl
+        self.assertNotIn("// old summary", src)  # replaced, not duplicated
+        self.assertIn("src/crc.c  crc32", shown)
+        self.assertNotIn("in-place repairs", shown)  # batched, not agentic
+
+    def test_rewrite_replaces_existing_block_and_strips_stray_markers(self):
+        # the common real input: an existing multi-line /** */ Doxygen block, and a
+        # model that (against instructions) wraps its reply in /** */ markers
+        _w(
+            self.dir / "src" / "blk.c",
+            "#include <stddef.h>\n\n"
+            "/**\n * @brief old brief\n * @param n count\n */\n"
+            "size_t tally(int n) {\n    return n;\n}\n",
+        )
+        _git(self.dir, "add", "-A")
+        self.ctx.graph.index(incremental=True)
+        rc, _ = self._rewrite(
+            '    print("/**")\n'
+            '    print(" * @brief New tally brief.")\n'
+            '    print(" * @param n the count")\n'
+            '    print(" */")\n'
+        )
+        self.assertEqual(rc, 0)
+        src = (self.dir / "src" / "blk.c").read_text()
+        self.assertEqual(src.count("/**"), 1)  # no doubled wrapper
+        self.assertEqual(src.count("*/"), 1)
+        self.assertIn(" * @brief New tally brief.", src)
+        self.assertNotIn("old brief", src)  # the whole old block was swapped out
+        self.assertIn(" */\nsize_t tally(int n)", src)
+
+    def test_rewrite_no_c_sources_is_a_clean_noop(self):
+        rc, shown = self._rewrite()  # setUp built only Python files
+        self.assertEqual(rc, 0)
+        self.assertIn("no C/C++ symbols", shown)
 
 
 class TestMultiLanguage(unittest.TestCase):
