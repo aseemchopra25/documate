@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import re
 
-from .core import GENERATED_STAMP, Context
+from .core import STAMPS, Context
 from .resolve import resolve
 
 HTML_MARK_RE = re.compile(r"<!--\s*documents:\s*(.*?)\s*-->", re.DOTALL)
@@ -46,7 +46,7 @@ def scan(ctx: Context) -> tuple[dict[str, list[str]], dict[tuple, str], list[tup
     bad: list[tuple] = []
     for md in sorted(ctx.config.docs_dir.rglob("*.md")):
         text = md.read_text()
-        if text.startswith(GENERATED_STAMP):
+        if text.startswith(STAMPS):
             continue  # generated tier: freshness-checked by regeneration, never scanned
         rel = md.relative_to(ctx.root).as_posix()
         for g in HTML_MARK_RE.findall(text) + MERMAID_MARK_RE.findall(text):

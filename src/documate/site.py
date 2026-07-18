@@ -27,7 +27,7 @@ import re
 from dataclasses import dataclass
 
 from . import ui
-from .core import GENERATED_STAMP, Context
+from .core import STAMPS, Context
 from .docs import (
     _EDGE_CAP,
     Model,
@@ -440,7 +440,7 @@ def _guides(ctx: Context) -> list[Guide]:
             text = md.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        if text.startswith(GENERATED_STAMP):
+        if text.startswith(STAMPS):
             continue
         rel = md.relative_to(ddir).as_posix()
         title = next(

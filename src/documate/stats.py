@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 from . import ui
-from .core import GENERATED_STAMP, Context
+from .core import STAMPS, Context
 
 #: The snapshot fields deltas compare (everything but the timestamp) — two
 #: snapshots agreeing on all of these are the same state, so record() skips.
@@ -77,7 +77,7 @@ def snapshot(ctx: Context, model=None) -> dict:
             text = md.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        if text.startswith(GENERATED_STAMP):
+        if text.startswith(STAMPS):
             gen += 1
         else:
             auth += 1

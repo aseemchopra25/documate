@@ -21,7 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import anchors, briefs, docs, drift, ui
-from .core import GENERATED_STAMP, Context
+from .core import STAMPS, Context
 
 _RIPPLE_HOPS = 1
 _RIPPLE_CAP = 500
@@ -58,9 +58,7 @@ def run(
             p.relative_to(ddir).as_posix()
             for p in (ddir / "architecture").rglob("*.md")
             if p.relative_to(ddir).as_posix() not in want
-            and p.read_text(encoding="utf-8", errors="replace").startswith(
-                GENERATED_STAMP
-            )
+            and p.read_text(encoding="utf-8", errors="replace").startswith(STAMPS)
         )
         if stale or orphans:
             failures += 1
