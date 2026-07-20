@@ -57,6 +57,22 @@ def py_symbols(path: Path) -> dict:
     return out
 
 
+def _block_span(lines: list[str], end: int) -> tuple[int, int] | None:
+    """(start, end) 0-indexed inclusive of the `/* … */` block closing on line `end`,
+    or None when that comment is a trailing one.
+
+    A comment sharing its line with code documents *that* code, not the declaration
+    below it. `typedef int mutex_t; /* single-threaded */` above a function is the
+    typedef's comment; reading it as the function's doc both credits the wrong symbol
+    and — because a rewrite replaces the lines it is given — deletes the typedef."""
+    i = end
+    while i >= 0 and "/*" not in lines[i]:
+        i -= 1
+    if i < 0:
+        return None
+    return None if lines[i][: lines[i].index("/*")].strip() else (i, end)
+
+
 def doc_above(lines: list[str], decl_idx: int, hash_ok: bool = False) -> str | None:
     """The doc-comment block sitting immediately above a declaration (0-indexed line).
 
@@ -82,6 +98,8 @@ def doc_above(lines: list[str], decl_idx: int, hash_ok: bool = False) -> str | N
         return None
     out: list[str] = []
     if lines[i].strip().endswith("*/"):  # /* ... */ or /** ... */ block
+        if _block_span(lines, i) is None:
+            return None  # a trailing comment on a code line is not our doc
         while i >= 0:
             t = lines[i].strip()
             body = t
@@ -135,9 +153,7 @@ def doc_span(lines: list[str], decl_idx: int) -> tuple[int, int] | None:
         return None
     end = i
     if lines[end].strip().endswith("*/"):  # /* ... */ or /** ... */ block
-        while i >= 0 and "/*" not in lines[i]:
-            i -= 1
-        return (i, end) if i >= 0 else None
+        return _block_span(lines, end)
     if lines[end].strip().startswith("//"):  # // /// //! line run
         while i >= 0 and lines[i].strip().startswith("//"):
             i -= 1

@@ -537,6 +537,61 @@ def _at_definition(lines: list[str], i: int) -> bool:
     return paren <= 0 and all(scopes)
 
 
+def _code_only(text: str) -> str:
+    """`text` with every C-family comment removed and whitespace collapsed: the part
+    of a file a doc edit must leave byte-identical.
+
+    Used as a before/after fingerprint, so it does not need to be a correct parser —
+    it needs to be *deterministic*, and to not let a comment delimiter inside a string
+    literal (`"http://x"`, `"/*"`) swallow the code after it, which would make a real
+    deletion compare equal. Strings, chars and escapes are tracked for that reason
+    alone. Comments collapse to a space so `a/*x*/b` cannot fuse into `ab`."""
+    out: list[str] = []
+    i, n, quote = 0, len(text), ""
+    while i < n:
+        c = text[i]
+        if quote:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if c == quote:
+                quote = ""
+        elif c in "\"'":
+            quote = c
+            out.append(c)
+        elif c == "/" and text[i : i + 2] == "/*":
+            j = text.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+            out.append(" ")
+            continue
+        elif c == "/" and text[i : i + 2] == "//":
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+            out.append(" ")
+            continue
+        else:
+            out.append(c)
+        i += 1
+    return " ".join("".join(out).split())
+
+
+def _guard_code(path: Path, before: str, lines: list[str]) -> str | None:
+    """Write `lines` to `path` only when doing so changes comments and nothing else.
+
+    A doc edit replaces whole lines, so any mistake about where a comment starts or
+    ends takes the code on those lines with it — silently, unless the deleted symbol
+    happens to break a build. This is the backstop that makes that class of bug
+    impossible to commit: the write is refused, the file is left as it was, and the
+    work order fails loudly instead."""
+    after = "".join(lines)
+    if _code_only(after) != _code_only(before):
+        return "refused: edit would change code, not just comments"
+    path.write_text(after, encoding="utf-8")
+    return None
+
+
 def _rewrite_above(ctx: Context, row: dict, text: str, shifts: dict) -> str | None:
     """Replace (or, when absent, insert) the Doxygen doc comment above a C-family
     declaration. Locates the decl by its recorded line — shift-corrected for earlier
@@ -550,9 +605,10 @@ def _rewrite_above(ctx: Context, row: dict, text: str, shifts: dict) -> str | No
     name = row["symbol"].split(".")[-1]
     path = ctx.root / row["file"]
     try:
-        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        before = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
         return str(e)
+    lines = before.splitlines(keepends=True)
     at = row.get("line")
     if not isinstance(at, int):
         return "no recorded line"
@@ -581,7 +637,9 @@ def _rewrite_above(ctx: Context, row: dict, text: str, shifts: dict) -> str | No
     else:
         lines.insert(decl, block)
         delta += block.count("\n")
-    path.write_text("".join(lines), encoding="utf-8")
+    err = _guard_code(path, before, lines)
+    if err:
+        return err
     shifts.setdefault(row["file"], []).append((at, delta))
     return None
 
@@ -685,9 +743,10 @@ def _insert_above(ctx: Context, row: dict, text: str, shifts: dict) -> str | Non
     prefix = _comment_prefix(row["file"]) or "//"
     path = ctx.root / row["file"]
     try:
-        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        before = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
         return str(e)
+    lines = before.splitlines(keepends=True)
     at = row.get("line")
     if not isinstance(at, int):
         return "no recorded line"
@@ -710,7 +769,12 @@ def _insert_above(ctx: Context, row: dict, text: str, shifts: dict) -> str | Non
     if block is None:
         return "empty draft"
     lines.insert(i, block)
-    path.write_text("".join(lines), encoding="utf-8")
+    if cfamily:
+        err = _guard_code(path, before, lines)
+        if err:
+            return err
+    else:
+        path.write_text("".join(lines), encoding="utf-8")
     shifts.setdefault(row["file"], []).append((at, block.count("\n")))
     return None
 

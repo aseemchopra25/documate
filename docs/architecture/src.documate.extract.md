@@ -49,8 +49,21 @@ Walk children; only a ClassDef extends the dotted prefix for its members.
 
 **called by** `py_symbols`
 
-### `doc_above(lines: list[str], decl_idx: int, hash_ok: bool=False) -> str | None`
+### `_block_span(lines: list[str], end: int) -> tuple[int, int] | None`
 `src/documate/extract.py:60`
+
+(start, end) 0-indexed inclusive of the `/* … */` block closing on line `end`,
+or None when that comment is a trailing one.
+
+A comment sharing its line with code documents *that* code, not the declaration
+below it. `typedef int mutex_t; /* single-threaded */` above a function is the
+typedef's comment; reading it as the function's doc both credits the wrong symbol
+and — because a rewrite replaces the lines it is given — deletes the typedef.
+
+**called by** `doc_above`, `doc_span`
+
+### `doc_above(lines: list[str], decl_idx: int, hash_ok: bool=False) -> str | None`
+`src/documate/extract.py:76`
 
 The doc-comment block sitting immediately above a declaration (0-indexed line).
 
@@ -64,10 +77,10 @@ a blank-separated comment is the file's, not the symbol's; see `module_doc`).
 Markers stripped. None when there's nothing up there. Heuristic, not a parser:
 the graph already told us *where* the symbol is, so this is just "read the lines above".
 
-**called by** `_decl_line`, `comment_symbols`, `module_doc`
+**called by** `_decl_line`, `comment_symbols`, `module_doc`  ·  **calls** `_block_span`
 
 ### `doc_span(lines: list[str], decl_idx: int) -> tuple[int, int] | None`
-`src/documate/extract.py:119`
+`src/documate/extract.py:137`
 
 (start, end) 0-indexed inclusive of the doc-comment block immediately above
 `decl_idx` — exactly the lines `doc_above` reads as the doc — or None when
@@ -75,8 +88,10 @@ nothing documentable sits there. Mirrors doc_above's block detection so a
 rewrite replaces precisely what the extractor (and the gate) counts as the doc,
 hopping the same annotation/attribute lines wedged between doc and declaration.
 
+**calls** `_block_span`
+
 ### `signature_at(lines: list[str], idx: int) -> str | None`
-`src/documate/extract.py:148`
+`src/documate/extract.py:164`
 
 The full declaration starting at line `idx` (0-indexed), rejoined when it wraps.
 
@@ -88,7 +103,7 @@ is a signature, not a file.
 **called by** `comment_symbols`
 
 ### `_sibling_header(path: Path) -> list[str]`
-`src/documate/extract.py:200`
+`src/documate/extract.py:216`
 
 Lines of the header next to a C/C++/ObjC implementation file, [] when none.
 
@@ -99,7 +114,7 @@ decl/def merge, done with string ops.
 **called by** `comment_symbols`
 
 ### `_decl_line(lines: list[str], name: str, kind: str, avoid: int=-1) -> int | None`
-`src/documate/extract.py:218`
+`src/documate/extract.py:234`
 
 The line index of another *documented* declaration of `name`, or None.
 
@@ -115,7 +130,7 @@ excludes the node's own line.
 **called by** `comment_symbols`  ·  **calls** `doc_above`
 
 ### `comment_symbols(path: Path, syms: list) -> dict`
-`src/documate/extract.py:245`
+`src/documate/extract.py:261`
 
 {dotted name: (signature, doc|None)} for a non-Python file: the graph gives each
 symbol's line, source gives the declaration (`signature_at`) and the comment above
@@ -132,7 +147,7 @@ checked via `_decl_line` before giving up.
 **called by** `extract`  ·  **calls** `_decl_line`, `_sibling_header`, `doc_above`, `short`, `signature_at`
 
 ### `extract(path: Path, syms: list) -> dict`
-`src/documate/extract.py:287`
+`src/documate/extract.py:303`
 
 Per-language doc extraction: Python through stdlib `ast`, everything else through the
 comment-above-declaration harvester. The one place that knows a file's language.
@@ -140,7 +155,7 @@ comment-above-declaration harvester. The one place that knows a file's language.
 **calls** `comment_symbols`, `py_symbols`
 
 ### `module_doc(path: Path, first_line: int | None=None) -> str | None`
-`src/documate/extract.py:301`
+`src/documate/extract.py:317`
 
 The module-level prose of a file: Python's module docstring; any other language's
 comment block at the top of the file (Go's `// Package x ...`, a doxygen `@file`

@@ -1,7 +1,7 @@
 <!-- generated documentation — edit the source, not this file -->
 # documate
 
-**18 subsystems · 267/267 symbols documented (100%)**
+**18 subsystems · 270/270 symbols documented (100%)**
 
 **Start here:** [`src/documate/cli.py`](architecture/src.documate.cli.md) — the door into the codebase (nothing else imports it).
 
@@ -84,6 +84,6 @@ flowchart LR
 
 ## Hotspots
 
-*Mined from git history as of `2336487`.*
+*Mined from git history as of `966d920`.*
 
-**Most-changed:** [`src/documate/briefs.py`](architecture/src.documate.briefs.md) (3 commits), [`src/documate/prose.py`](architecture/src.documate.prose.md) (3 commits), [`src/documate/cli.py`](architecture/src.documate.cli.md) (2 commits), [`src/documate/docs.py`](architecture/src.documate.docs.md) (2 commits), [`src/documate/extract.py`](architecture/src.documate.extract.md) (2 commits).
+**Most-changed:** [`src/documate/briefs.py`](architecture/src.documate.briefs.md) (4 commits), [`src/documate/extract.py`](architecture/src.documate.extract.md) (3 commits), [`src/documate/prose.py`](architecture/src.documate.prose.md) (3 commits), [`src/documate/cli.py`](architecture/src.documate.cli.md) (2 commits), [`src/documate/docs.py`](architecture/src.documate.docs.md) (2 commits).

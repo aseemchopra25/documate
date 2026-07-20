@@ -3811,6 +3811,60 @@ class CFamilyInsertTest(unittest.TestCase):
         self.assertTrue(out.startswith("/**"), out)
         self.assertIn("static enum err\nparse_attr", out)
 
+    def test_trailing_comment_above_a_decl_is_not_its_doc(self):
+        # Regression: `typedef int mutex_t; /* … */` sitting above a function closes
+        # with `*/`, so the block scan claimed the whole line as the function's doc —
+        # and the rewrite replaced those lines, deleting the typedef with the comment.
+        src = (
+            "typedef int mutex_t; /* single-threaded */\n"
+            "static void mutex_init(mutex_t *m)\n"
+            "{\n\t(void)m;\n}\n"
+        )
+        path = self._write("m.c", src)
+        row = {"kind": "rewrite", "symbol": "mutex_init", "file": "m.c", "line": 2}
+        err = P._rewrite_above(self.ctx, row, "@brief Initialises.", {})
+        out = path.read_text(encoding="utf-8")
+        self.assertIsNone(err)
+        self.assertIn("typedef int mutex_t; /* single-threaded */", out)
+        self.assertIn("@brief Initialises.", out)
+
+    def test_trailing_comment_is_not_counted_as_documentation(self):
+        # The same misread inflates coverage: the typedef's comment gets credited
+        # to the declaration below it.
+        lines = ["typedef int mutex_t; /* single-threaded */\n", "static void f(void)\n"]
+        self.assertIsNone(EX.doc_above(lines, 1))
+        self.assertIsNone(EX.doc_span(lines, 1))
+
+    def test_own_line_block_is_still_read_and_replaced(self):
+        lines = ["/* Adds two numbers. */\n", "int add(int x)\n"]
+        self.assertEqual(EX.doc_above(lines, 1), "Adds two numbers.")
+        self.assertEqual(EX.doc_span(lines, 1), (0, 0))
+
+    def test_an_edit_that_would_change_code_is_refused(self):
+        path = self._write("n.c", "int keep = 1;\nint add(int x)\n{\n\treturn x;\n}\n")
+        before = path.read_text(encoding="utf-8")
+        lines = ["int add(int x)\n", "{\n", "\treturn x;\n", "}\n"]  # `keep` dropped
+        err = P._guard_code(path, before, lines)
+        self.assertEqual(err, "refused: edit would change code, not just comments")
+        self.assertEqual(path.read_text(encoding="utf-8"), before)
+
+    def test_a_comment_only_edit_is_written(self):
+        path = self._write("o.c", "int add(int x)\n{\n\treturn x;\n}\n")
+        before = path.read_text(encoding="utf-8")
+        lines = ["/** @brief Adds. */\n", "int add(int x)\n", "{\n", "\treturn x;\n", "}\n"]
+        self.assertIsNone(P._guard_code(path, before, lines))
+        self.assertIn("@brief Adds.", path.read_text(encoding="utf-8"))
+
+    def test_code_fingerprint_ignores_comment_markers_inside_strings(self):
+        # A naive stripper reads the `//` in the URL as a comment and swallows the
+        # rest of the line, which would make a real deletion compare equal.
+        kept = P._code_only('const char *u = "http://x"; /* c */\nint n = 1;\n')
+        lost = P._code_only('const char *u = "http://x";\n')
+        self.assertNotEqual(kept, lost)
+        self.assertEqual(kept, 'const char *u = "http://x"; int n = 1;')
+
+    def test_code_fingerprint_does_not_fuse_tokens_across_a_comment(self):
+        self.assertEqual(P._code_only("a/*x*/b"), "a b")
 
 
 if __name__ == "__main__":
