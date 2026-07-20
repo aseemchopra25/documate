@@ -30,7 +30,7 @@ on every save is a token faucet — run --ai as a deliberate one-shot.
 ## API
 
 ### `_index(ctx: Context, full: bool) -> None`
-`src/documate/cli.py:41`
+`src/documate/cli.py:42`
 
 Refresh the graph before anything reads it. Default is incremental-when-a-
 graph-exists: re-parse only what changed since the last build (fast on big repos,
@@ -41,7 +41,7 @@ wait (this is the one silent-slow step), then one line says what it did.
 **called by** `_dispatch`, `_watch`
 
 ### `_snapshot(ctx: Context) -> dict[str, float]`
-`src/documate/cli.py:58`
+`src/documate/cli.py:59`
 
 {tracked file: mtime} — everything that can change the generated docs.
 
@@ -52,7 +52,7 @@ forever. A vanished file drops out of the dict, which is itself a change.
 **called by** `_watch`
 
 ### `_watch(ctx: Context, html: bool) -> int`
-`src/documate/cli.py:84`
+`src/documate/cli.py:85`
 
 `documate --watch` — poll for source changes, regenerate on each one.
 
@@ -67,7 +67,7 @@ every doc page that changed in response — the live terminal view of the docs.
 **called by** `_dispatch`  ·  **calls** `_index`, `_snapshot`
 
 ### `_repo_here() -> bool`
-`src/documate/cli.py:119`
+`src/documate/cli.py:120`
 
 Is the cwd inside a git work tree? Decides whether a bare `documate` can act
 (there's a repo to document) or should explain itself (the help screen).
@@ -75,7 +75,7 @@ Is the cwd inside a git work tree? Decides whether a bare `documate` can act
 **called by** `main`
 
 ### `build_parser() -> argparse.ArgumentParser`
-`src/documate/cli.py:128`
+`src/documate/cli.py:129`
 
 Build the one flat parser: no subcommands, so `documate -h` is the whole
 surface on one screen (rendered through rich-argparse, the one cosmetic
@@ -84,7 +84,7 @@ dependency). The three modes come first, overrides after.
 **called by** `main`
 
 ### `_scaffold(ctx: Context) -> None`
-`src/documate/cli.py:262`
+`src/documate/cli.py:269`
 
 `--init`: write the starter config, then teach the ignore defaults so the
 user knows what's already skipped before they add to it. Never clobbers an
@@ -95,7 +95,7 @@ follow see exactly what they would have without it.
 **called by** `_dispatch`
 
 ### `_dispatch(args) -> int`
-`src/documate/cli.py:279`
+`src/documate/cli.py:286`
 
 Route one parsed invocation: index first (every mode reads the graph), then
 the mode — gate only (--check), the model layer (--ai), or the default job:
@@ -105,7 +105,7 @@ gate on purpose: it's a dev loop, and gating every save would be noise.
 **called by** `main`  ·  **calls** `_index`, `_scaffold`, `_watch`
 
 ### `main(argv=None) -> int`
-`src/documate/cli.py:355`
+`src/documate/cli.py:362`
 
 Console entry point: parse argv, dispatch, return the exit code.
 

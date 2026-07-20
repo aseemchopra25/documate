@@ -26,6 +26,7 @@ on every save is a token faucet — run --ai as a deliberate one-shot.
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 import subprocess
 import sys
@@ -141,6 +142,12 @@ def build_parser() -> argparse.ArgumentParser:
         "  documate --ai            let a model draft what's missing, then verify\n"
         "  documate --stats         coverage, doc lines +/−, model spend so far",
         formatter_class=RawDescriptionRichHelpFormatter,
+    )
+    p.add_argument(
+        "-v",
+        "--version",
+        action="version",
+        version=f"documate {importlib.metadata.version('documate')}",
     )
     p.add_argument(
         "path",
