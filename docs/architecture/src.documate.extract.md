@@ -66,8 +66,17 @@ the graph already told us *where* the symbol is, so this is just "read the lines
 
 **called by** `_decl_line`, `comment_symbols`, `module_doc`
 
-### `signature_at(lines: list[str], idx: int) -> str | None`
+### `doc_span(lines: list[str], decl_idx: int) -> tuple[int, int] | None`
 `src/documate/extract.py:119`
+
+(start, end) 0-indexed inclusive of the doc-comment block immediately above
+`decl_idx` — exactly the lines `doc_above` reads as the doc — or None when
+nothing documentable sits there. Mirrors doc_above's block detection so a
+rewrite replaces precisely what the extractor (and the gate) counts as the doc,
+hopping the same annotation/attribute lines wedged between doc and declaration.
+
+### `signature_at(lines: list[str], idx: int) -> str | None`
+`src/documate/extract.py:148`
 
 The full declaration starting at line `idx` (0-indexed), rejoined when it wraps.
 
@@ -79,7 +88,7 @@ is a signature, not a file.
 **called by** `comment_symbols`
 
 ### `_sibling_header(path: Path) -> list[str]`
-`src/documate/extract.py:171`
+`src/documate/extract.py:200`
 
 Lines of the header next to a C/C++/ObjC implementation file, [] when none.
 
@@ -90,7 +99,7 @@ decl/def merge, done with string ops.
 **called by** `comment_symbols`
 
 ### `_decl_line(lines: list[str], name: str, kind: str, avoid: int=-1) -> int | None`
-`src/documate/extract.py:189`
+`src/documate/extract.py:218`
 
 The line index of another *documented* declaration of `name`, or None.
 
@@ -103,7 +112,7 @@ declaration), and `avoid` excludes the node's own line.
 **called by** `comment_symbols`  ·  **calls** `doc_above`
 
 ### `comment_symbols(path: Path, syms: list) -> dict`
-`src/documate/extract.py:210`
+`src/documate/extract.py:239`
 
 {dotted name: (signature, doc|None)} for a non-Python file: the graph gives each
 symbol's line, source gives the declaration (`signature_at`) and the comment above
@@ -120,7 +129,7 @@ checked via `_decl_line` before giving up.
 **called by** `extract`  ·  **calls** `_decl_line`, `_sibling_header`, `doc_above`, `short`, `signature_at`
 
 ### `extract(path: Path, syms: list) -> dict`
-`src/documate/extract.py:252`
+`src/documate/extract.py:281`
 
 Per-language doc extraction: Python through stdlib `ast`, everything else through the
 comment-above-declaration harvester. The one place that knows a file's language.
@@ -128,7 +137,7 @@ comment-above-declaration harvester. The one place that knows a file's language.
 **calls** `comment_symbols`, `py_symbols`
 
 ### `module_doc(path: Path, first_line: int | None=None) -> str | None`
-`src/documate/extract.py:266`
+`src/documate/extract.py:295`
 
 The module-level prose of a file: Python's module docstring; any other language's
 comment block at the top of the file (Go's `// Package x ...`, a doxygen `@file`

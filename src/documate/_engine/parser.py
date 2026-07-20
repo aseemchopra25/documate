@@ -4964,6 +4964,24 @@ class CodeParser:
 
         Returns True if the child was handled (class with a name found).
         """
+        # C/C++: tree-sitter uses the same *_specifier node for a definition and
+        # for every mere type reference — `struct foo;`, `struct foo *p`, a local
+        # of an external libc type. Only the definition carries a body field; a
+        # reference must not become a node, or every *using* file gains a bogus
+        # documentable "Class" (inflating undocumented counts with types the repo
+        # doesn't even own).
+        if (
+            language in ("c", "cpp")
+            and child.type
+            in (
+                "struct_specifier",
+                "class_specifier",
+                "union_specifier",
+                "enum_specifier",
+            )
+            and child.child_by_field_name("body") is None
+        ):
+            return False
         name = self._get_name(child, language, "class")
         if not name:
             return False

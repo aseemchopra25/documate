@@ -14,7 +14,7 @@ for non-terminals, and soft_wrap keeps messages greppable at any width.
 Stream contract is preserved from the print() era: successes and advisories
 go to stdout, gate failures to stderr — CI redirects keep meaning.
 
-**used by** [`src/documate/check.py`](src.documate.check.md), [`src/documate/cli.py`](src.documate.cli.md), [`src/documate/docs.py`](src.documate.docs.md), [`src/documate/prose.py`](src.documate.prose.md), [`src/documate/site.py`](src.documate.site.md), [`src/documate/stats.py`](src.documate.stats.md)
+**used by** [`src/documate/check.py`](src.documate.check.md), [`src/documate/cli.py`](src.documate.cli.md), [`src/documate/docs.py`](src.documate.docs.md), [`src/documate/prose.py`](src.documate.prose.md), [`src/documate/site.py`](src.documate.site.md), [`src/documate/stats.py`](src.documate.stats.md), [`src/documate/undo.py`](src.documate.undo.md)
 
 ## API
 

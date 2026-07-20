@@ -312,13 +312,40 @@ def _undoc_briefs(
     return out
 
 
+#: implementation suffixes for the header-contract rule — a symbol defined here may
+#: carry its real contract on a sibling-header prototype instead
+_IMPLS = (".c", ".cc", ".cpp", ".cxx", ".m", ".mm")
+
+
+def _block_above(lines: list[str], idx: int) -> tuple[bool, bool, str]:
+    """(documented, doxygen, text) for the comment block directly above the
+    0-indexed decl line: whether one exists, whether it is already a `/** */`
+    block carrying `@brief` (the form --rewrite emits — nothing left to do),
+    and its raw text (for spotting a `@param` contract)."""
+    span = extract.doc_span(lines, idx) if 0 <= idx <= len(lines) else None
+    if span is None:
+        return False, False, ""
+    start, end = span
+    text = "\n".join(lines[start : end + 1])
+    return True, lines[start].lstrip().startswith("/**") and "@brief" in text, text
+
+
 def _rewrite_briefs(ctx: Context, xrefs: tuple, tested: dict) -> list[tuple[str, dict]]:
     """(text, index row) per C-family Function/Class — the `--rewrite` scope. Every
     C/C++ symbol gets a work order to (re)write its doc comment as Doxygen: the
     current doc (when any) and the source are quoted so the model improves on what's
     there rather than inventing. Rows sort by (file, line) so the inserter, running a
     file's symbols top-to-bottom, keeps its line-shift bookkeeping coherent. Empty
-    without a graph or without C sources."""
+    without a graph or without C sources.
+
+    Idempotent, so runs compose under the per-run cap: a symbol whose doc is already
+    a `/** @brief */` block is done and emits nothing — re-running works through the
+    remainder instead of redoing (and re-billing) the same first symbols. Two more
+    skips keep the .h/.c contract single-sourced: a definition with no doc of its own
+    whose sibling-header prototype documents it in Doxygen form emits nothing (Doxygen
+    merges decl and def — writing a second block would duplicate the contract), and a
+    definition that duplicates a Doxygen-documented prototype's contract gets a
+    @brief-only order so the two blocks can't disagree."""
     cand = [
         s
         for s in ctx.graph.symbols()
@@ -327,6 +354,7 @@ def _rewrite_briefs(ctx: Context, xrefs: tuple, tested: dict) -> list[tuple[str,
         and not docs._machine_generated(Path(s["file"]))
     ]
     out: list[tuple[str, dict]] = []
+    lines_of: dict[str, list[str]] = {}
     for s in sorted(cand, key=lambda s: (s["file"], s["line"] or 0)):
         rel = ctx.rel(s["file"])
         node = next(
@@ -338,6 +366,27 @@ def _rewrite_briefs(ctx: Context, xrefs: tuple, tested: dict) -> list[tuple[str,
             None,
         )
         line, line_end = (node[2], node[3]) if node else (s["line"], None)
+        if s["file"] not in lines_of:
+            try:
+                lines_of[s["file"]] = (
+                    Path(s["file"])
+                    .read_text(encoding="utf-8", errors="ignore")
+                    .splitlines()
+                )
+            except OSError:
+                lines_of[s["file"]] = []
+        own, own_dox, own_text = _block_above(lines_of[s["file"]], (line or 1) - 1)
+        header_dox = False
+        if s["kind"] == "Function" and Path(s["file"]).suffix in _IMPLS:
+            hlines = extract._sibling_header(Path(s["file"]))
+            hat = extract._decl_line(hlines, s["name"], "Function") if hlines else None
+            if hat is not None:
+                header_dox = _block_above(hlines, hat)[1]
+        if not own and header_dox:
+            continue  # the prototype carries the contract; Doxygen merges decl/def
+        brief_only = own and header_dox
+        if own_dox and not (brief_only and re.search(r"@param|@return", own_text)):
+            continue  # already the block --rewrite would write — resume past it
         prose = extract.extract(
             Path(s["file"]),
             [{"qualified": s["qualified"], "line": line, "kind": s["kind"]}],
@@ -353,6 +402,13 @@ def _rewrite_briefs(ctx: Context, xrefs: tuple, tested: dict) -> list[tuple[str,
         ]
         if cur:
             parts.append("## Current documentation\n\n" + _fence("text", cur))
+        if brief_only:
+            parts.append(
+                "## Contract\n\nThe parameter contract for this symbol lives on its "
+                "header prototype, which is already documented. Write ONLY the "
+                "`@brief` line for this definition — no `@param`, no `@return` — "
+                "so the two blocks cannot disagree."
+            )
         src = _span(ctx, rel, line, line_end)
         if src:
             parts.append(
@@ -433,6 +489,45 @@ def _module_briefs(ctx: Context) -> list[tuple[str, dict]]:
             "line": members[0]["line"],
         }
         out.append(("\n\n".join(parts) + "\n", meta))
+    return out
+
+
+def undocumented(ctx: Context) -> list[dict]:
+    """The machine-readable undocumented map (`--list-undocumented`): one row per
+    symbol with no docstring/doc-comment (kind "undocumented") and per module with
+    no top-of-file prose (kind "module"), same scope rules as the seeding pass
+    (skip_dirs, test markers, machine-generated files skipped). Plain dicts —
+    writes nothing, calls no model; the way to just ask what's missing instead of
+    reverse-engineering it out of the generated pages."""
+    cand = [
+        s
+        for s in ctx.graph.symbols()
+        if not docs._skip(ctx, ctx.rel(s["file"]))
+        and not docs._machine_generated(Path(s["file"]))
+    ]
+    out = [
+        {
+            "kind": "undocumented",
+            "symbol": extract.short(s["qualified"]),
+            "file": ctx.rel(s["file"]),
+            "line": s["line"],
+        }
+        for s in sorted(_no_doc(ctx, cand), key=lambda s: (s["file"], s["line"] or 0))
+    ]
+    by_file: dict[str, list[dict]] = {}
+    for s in cand:
+        by_file.setdefault(s["file"], []).append(s)
+    for abs_file, members in sorted(by_file.items()):
+        members.sort(key=lambda s: s["line"] or 0)
+        if not extract.module_doc(Path(abs_file), members[0]["line"]):
+            out.append(
+                {
+                    "kind": "module",
+                    "symbol": "module",
+                    "file": ctx.rel(abs_file),
+                    "line": members[0]["line"],
+                }
+            )
     return out
 
 

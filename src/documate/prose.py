@@ -34,15 +34,17 @@ terminal, a plain transcript in CI).
 from __future__ import annotations
 
 import difflib
+import fnmatch
 import json
 import os
 import re
 import concurrent.futures
+import shlex
 import subprocess
 import threading
 from pathlib import Path
 
-from . import briefs, check, docs, extract, stats, ui
+from . import briefs, check, docs, extract, stats, ui, undo
 from .core import Context
 
 _CAP = 200  # briefs per run — bounds one run's spend; re-run to continue
@@ -161,6 +163,12 @@ class _Spend:
                 self.usd += usd
                 self._billed = True
         self.on_change()
+
+    def spent(self) -> float:
+        """Settled dollars so far — what a --budget check compares against.
+        Measured from finished calls' own cost reports, never a price table."""
+        with self._lk:
+            return self.usd
 
     @property
     def measured(self) -> bool:
@@ -377,7 +385,7 @@ def _doxygen_block(text: str, ind: str) -> str | None:
 _DECL_PREFIX_MAX = 4
 
 #: a line that is nothing but type/qualifier words and pointer stars, e.g.
-#: `static enum aliro_uwb_err`, `struct cherry_session *`, `CHIP_ERROR`, `*`.
+#: `static enum uwb_err`, `struct session_ctx *`, `CHIP_ERROR`, `*`.
 #: Anything carrying punctuation that opens or ends a statement is excluded, so
 #: the walk can never cross `;`, `{`, `}`, `(`, `=`, a comment or a directive.
 _DECL_PREFIX = re.compile(r"^[A-Za-z_][A-Za-z0-9_ \t*]*$|^\*+$")
@@ -387,28 +395,106 @@ _DECL_PREFIX = re.compile(r"^[A-Za-z_][A-Za-z0-9_ \t*]*$|^\*+$")
 _MEMBER_SCOPE = re.compile(r"\b(struct|class|enum|union|namespace|extern)\b")
 
 
+#: how far a comment block wedged inside a declaration may run before the walk
+#: refuses to treat it as part of the declaration
+_WEDGE_MAX = 20
+
+
 def _decl_start(lines: list[str], i: int) -> int:
     """Index of the first line of the declaration whose name sits on line `i`.
 
     C and C++ routinely break a declaration after the return type, which is the
     house style across the Linux kernel and Zephyr:
 
-        static enum aliro_uwb_err
-        parse_session_attribute(struct aliro_uwb_msg_attribute *attr, ...)
+        static enum uwb_err
+        parse_session_attribute(struct uwb_msg_attribute *attr, ...)
 
-    The graph records the symbol at its name, so inserting above that line puts
-    the comment *inside* the declaration, where Doxygen and `extract.doc_above`
-    both stop seeing it — the symbol reads as undocumented however many times it
-    is written. Walk up over bare type/qualifier/`*` lines to the real start."""
+    Inserting directly above the name line puts the comment *inside* the
+    declaration, where Doxygen and `extract.doc_above` both stop seeing it — the
+    symbol reads as undocumented however many times it is written. Walk up over
+    bare type/qualifier/`*` lines to the real start. A comment block found
+    mid-walk with a type/qualifier line directly above it is exactly that damage
+    (an older insert wedged it inside the declaration): hop it and keep
+    climbing, so a rewrite lands above the whole declaration — `_wedged_spans`
+    finds the hopped block for removal. A comment with anything else above it is
+    the symbol's doc, not damage, and ends the walk as before."""
     j = i
     for _ in range(_DECL_PREFIX_MAX):
         if j == 0:
             break
         s = lines[j - 1].strip()
+        if s.endswith("*/") or s.startswith("//"):
+            top = j - 1
+            if s.endswith("*/"):
+                while top >= 0 and "/*" not in lines[top]:
+                    top -= 1
+            else:
+                while top > 0 and lines[top - 1].strip().startswith("//"):
+                    top -= 1
+            above = lines[top - 1].strip() if top > 0 else ""
+            if top >= 0 and j - top <= _WEDGE_MAX and above and _DECL_PREFIX.match(above):
+                j = top  # wedged inside the declaration: hop it, keep climbing
+                continue
+            break
         if not s or not _DECL_PREFIX.match(s):
             break
         j -= 1
     return j
+
+
+def _wedged_spans(lines: list[str], decl: int, name: int) -> list[tuple[int, int]]:
+    """(start, end) 0-indexed inclusive spans of comment blocks sitting between a
+    declaration's first line and its name line — the damage an older insert left
+    wedged inside the declaration. `_decl_start`'s hop walks above them; deleting
+    them is the other half of the repair."""
+    spans: list[tuple[int, int]] = []
+    k = decl
+    while k < name:
+        s = lines[k].strip()
+        if s.startswith("/*"):
+            start = k
+            while k < name and "*/" not in lines[k]:
+                k += 1
+            spans.append((start, min(k, name - 1)))
+        elif s.startswith("//"):
+            start = k
+            while k + 1 < name and lines[k + 1].strip().startswith("//"):
+                k += 1
+            spans.append((start, k))
+        k += 1
+    return spans
+
+
+def _find_decl(lines: list[str], at: int, word: re.Pattern) -> int | None:
+    """0-index of the line carrying the symbol's name, from its recorded line
+    `at` (1-indexed, already shift-corrected), or None.
+
+    The graph records a C declaration at its first line, so the name sits on it
+    or 1-2 lines below (return type on its own line), occasionally one above —
+    the original probe window. When a comment block sits wedged inside the
+    declaration (older-insert damage), the name is further down than the window
+    reaches: from a type/qualifier first line, walk forward over type, blank and
+    comment lines — never matching the name against comment text, which may
+    legitimately mention it — until the first other code line."""
+    for j in (at - 1, at, at - 2, at + 1):
+        if 0 <= j < len(lines) and word.search(lines[j]):
+            return j
+    j = at - 1
+    if not (0 <= j < len(lines)) or not _DECL_PREFIX.match(lines[j].strip()):
+        return None
+    k, hops = j + 1, 0
+    while k < len(lines) and hops < _WEDGE_MAX:
+        s = lines[k].strip()
+        if s.startswith("/*"):
+            while k < len(lines) and "*/" not in lines[k]:
+                k, hops = k + 1, hops + 1
+        elif s and not s.startswith("//"):
+            if word.search(lines[k]):
+                return k
+            if not _DECL_PREFIX.match(s):
+                return None
+        k, hops = k + 1, hops + 1
+    return None
 
 
 def _at_definition(lines: list[str], i: int) -> bool:
@@ -451,43 +537,16 @@ def _at_definition(lines: list[str], i: int) -> bool:
     return paren <= 0 and all(scopes)
 
 
-def _doc_span(lines: list[str], decl_idx: int) -> tuple[int, int] | None:
-    """(start, end) 0-indexed inclusive of the doc-comment block immediately above
-    `decl_idx` — exactly the lines `extract.doc_above` reads as the doc — or None
-    when nothing documentable sits there. Mirrors doc_above's block detection so a
-    rewrite replaces precisely what the extractor (and the gate) counts as the doc,
-    hopping the same annotation/attribute lines wedged between doc and declaration."""
-    i = decl_idx - 1
-    while i >= 0:
-        s = lines[i].strip()
-        if not s:
-            return None
-        if s.startswith("@") or s.startswith("#["):
-            i -= 1
-            continue
-        break
-    if i < 0:
-        return None
-    end = i
-    if lines[end].strip().endswith("*/"):  # /* ... */ or /** ... */ block
-        while i >= 0 and "/*" not in lines[i]:
-            i -= 1
-        return (i, end) if i >= 0 else None
-    if lines[end].strip().startswith("//"):  # // /// //! line run
-        while i >= 0 and lines[i].strip().startswith("//"):
-            i -= 1
-        return (i + 1, end)
-    return None
-
-
 def _rewrite_above(ctx: Context, row: dict, text: str, shifts: dict) -> str | None:
     """Replace (or, when absent, insert) the Doxygen doc comment above a C-family
     declaration. Locates the decl by its recorded line — shift-corrected for earlier
     rewrites in this run — confirmed by the symbol's name on (or within two lines of)
     the landing line; swaps the existing doc block found by `_doc_span` for a fresh
     `/** */` block, or inserts one when there's no doc there yet (a symbol documented
-    only on its header prototype). Nothing is written when the decl can't be located
-    or the draft is empty."""
+    only on its header prototype). A comment block an older insert wedged inside the
+    declaration is deleted on the way — the rewrite self-heals that damage instead of
+    upgrading it in place. Nothing is written when the decl can't be located or the
+    draft is empty."""
     name = row["symbol"].split(".")[-1]
     path = ctx.root / row["file"]
     try:
@@ -499,32 +558,29 @@ def _rewrite_above(ctx: Context, row: dict, text: str, shifts: dict) -> str | No
         return "no recorded line"
     off = sum(n for pos, n in shifts.get(row["file"], ()) if pos <= at)
     word = re.compile(rf"\b{re.escape(name)}\b")
-    i = next(
-        (
-            j
-            for j in (at - 1 + off, at + off, at - 2 + off, at + 1 + off)
-            if 0 <= j < len(lines) and word.search(lines[j])
-        ),
-        None,
-    )
+    i = _find_decl(lines, at + off, word)
     if i is None:
         return "definition not found"
     # no suffix gate: rewrite briefs are already C-family only (scoped in briefs)
     if not _at_definition(lines, i):
         return "landing line is not a definition"
-    i = _decl_start(lines, i)
-    block = _doxygen_block(text, re.match(r"\s*", lines[i]).group(0))
+    decl = _decl_start(lines, i)
+    delta = 0
+    for a, b in reversed(_wedged_spans(lines, decl, i)):
+        del lines[a : b + 1]
+        delta -= b - a + 1
+    block = _doxygen_block(text, re.match(r"\s*", lines[decl]).group(0))
     if block is None:
         return "empty draft"
-    span = _doc_span(lines, i)
+    span = extract.doc_span(lines, decl)
     if span is not None:
         start, end = span
         removed = end - start + 1
         lines[start : end + 1] = [block]
-        delta = block.count("\n") - removed
+        delta += block.count("\n") - removed
     else:
-        lines.insert(i, block)
-        delta = block.count("\n")
+        lines.insert(decl, block)
+        delta += block.count("\n")
     path.write_text("".join(lines), encoding="utf-8")
     shifts.setdefault(row["file"], []).append((at, delta))
     return None
@@ -637,14 +693,7 @@ def _insert_above(ctx: Context, row: dict, text: str, shifts: dict) -> str | Non
         return "no recorded line"
     off = sum(n for pos, n in shifts.get(row["file"], ()) if pos <= at)
     word = re.compile(rf"\b{re.escape(name)}\b")
-    i = next(
-        (
-            j
-            for j in (at - 1 + off, at + off, at - 2 + off, at + 1 + off)
-            if 0 <= j < len(lines) and word.search(lines[j])
-        ),
-        None,
-    )
+    i = _find_decl(lines, at + off, word)
     if i is None:
         return "definition not found"
     cfamily = row["file"].endswith(extract.CFAMILY)
@@ -826,10 +875,14 @@ def _draft_batch(
     timeout: int,
     cmd: list[str] | None,
     spend: _Spend,
+    touched: set | None = None,
+    budget: float | None = None,
 ) -> int:
     """The batched single-turn path for undocumented symbols and modules: one
     model call per _BATCH briefs, up to _WORKERS calls in flight at once over
-    file-disjoint lanes. The run reads as one ✓ line per docstring, printed
+    file-disjoint lanes. With a `budget`, no new call starts once the settled
+    spend reaches it (in-flight calls finish, so the stop can overshoot by up
+    to one call per lane) — the remainder is reported, not failed. The run reads as one ✓ line per docstring, printed
     the moment its block completes — file, symbol, drafted summary; a single
     spinner covers the rest (waiting, thinking, then a running n/m count over
     the whole run), carrying the live token/dollar spend on the same line.
@@ -845,6 +898,7 @@ def _draft_batch(
     phase = {"msg": f"{model}: waiting for the first tokens"}
     procs: set = set()  # every in-flight model process — Ctrl-C kills them all
     stop = threading.Event()
+    over = threading.Event()  # the --budget cap was hit; lanes drain, none restart
     inflight: list[dict] = []  # before-snapshots of chunks still drafting
     spin = ui.spinner(phase["msg"])
 
@@ -861,6 +915,9 @@ def _draft_batch(
         shifts: dict = {}
         for at in range(0, len(lane_rows), _BATCH):
             if stop.is_set():
+                return
+            if budget is not None and spend.spent() >= budget:
+                over.set()
                 return
             chunk = lane_rows[at : at + _BATCH]
             prompt = _batch_prompt(chunk, briefs_dir)
@@ -969,6 +1026,14 @@ def _draft_batch(
     ex.shutdown(wait=True)
     spin.stop()
     _totals_line(totals, spend)
+    if over.is_set():
+        left = len(rows) - state["done"] - state["failures"]
+        ui.warn(
+            f"fix: --budget ${budget:.2f} reached — {left} work order(s) not "
+            "drafted; re-run to continue"
+        )
+    if touched is not None:  # every batch target is a source file
+        touched.update(totals["files"])
     return state["failures"]
 
 
@@ -1050,9 +1115,12 @@ def _draft(
     timeout: int,
     cmd: list[str] | None,
     spend: _Spend,
+    touched: set | None = None,
+    budget: float | None = None,
 ) -> int:
     """Feed each work order to the model (brief on stdin, repo as cwd), showing
-    live progress — the in-flight brief on the bar (with the run's spend so
+    live progress. With a `budget`, no new call starts once the settled spend
+    reaches it — the remainder is reported, not failed. — the in-flight brief on the bar (with the run's spend so
     far), one ✓/✗ line per outcome. Each call's result JSON settles the meter.
     Ends with a run total. Returns the number of failures; a missing claude CLI
     fails every order with one clear hint instead of a stack trace, and Ctrl-C
@@ -1060,7 +1128,13 @@ def _draft(
     failures = 0
     totals: dict = {"files": set(), "added": 0, "removed": 0}
     with ui.tracker(len(index)) as track:
-        for row in index:
+        for n, row in enumerate(index):
+            if budget is not None and spend.spent() >= budget:
+                ui.warn(
+                    f"fix: --budget ${budget:.2f} reached — {len(index) - n} work "
+                    "order(s) not drafted; re-run to continue"
+                )
+                break
             label = (
                 f"{row['kind']}  {row.get('page') or row['file']}  ({row['symbol']})"
             )
@@ -1105,6 +1179,10 @@ def _draft(
                 track.done(f"drafted  {label}")
             _tally(ctx, before, totals)
     _totals_line(totals, spend)
+    if touched is not None:  # source targets only — drift rows also edit .md pages
+        touched.update(
+            f for f in totals["files"] if any(r.get("file") == f for r in index)
+        )
     return failures
 
 
@@ -1117,7 +1195,12 @@ def _tok(n: int) -> str:
 
 
 def _preflight(
-    ctx: Context, index: list[dict], briefs_dir: Path, model: str, yes: bool
+    ctx: Context,
+    index: list[dict],
+    briefs_dir: Path,
+    model: str,
+    yes: bool,
+    budget: float | None = None,
 ) -> bool | None:
     """No model call starts unannounced: show exactly what --ai is about to do
     — every symbol, every file, how many calls, and a token estimate measured
@@ -1167,13 +1250,13 @@ def _preflight(
     if agentic:
         est += "  (floor — the agent may Read more)"
     lines.append((est, None))
-    lines.append(
-        (
-            f"safety  drafts land uncommitted · {_TIMEOUT}s/call · "
-            f"cap {_CAP}/run · gate re-verifies",
-            "dim",
-        )
+    safety = (
+        f"safety  drafts land uncommitted · {_TIMEOUT}s/call · "
+        f"cap {_CAP}/run · gate re-verifies"
     )
+    if budget is not None:
+        safety += f" · budget ${budget:.2f}"
+    lines.append((safety, "dim"))
     ui.plan("--ai plan", lines)
     if yes:
         return True
@@ -1188,6 +1271,42 @@ def _preflight(
         ui.note("fix: declined — no model was called, nothing changed")
         return False
     return True
+
+
+def _only(index: list[dict], pattern: str | None) -> list[dict]:
+    """The work orders whose repo-relative file (or authored page, for drift rows)
+    matches the `--only` glob — fnmatch, so `*` crosses directories — leaving the
+    context root alone: aiming a run at one subtree no longer means pointing the
+    whole tool (and its `.documate/`, its `docs/`) at that subtree. Says what the
+    filter dropped, so a too-narrow glob is visible instead of a silent no-op."""
+    if not pattern:
+        return index
+    kept = [
+        r
+        for r in index
+        if fnmatch.fnmatch(r["file"], pattern)
+        or (r.get("page") and fnmatch.fnmatch(r["page"], pattern))
+    ]
+    if len(kept) < len(index):
+        ui.note(f"fix: --only {pattern} keeps {len(kept)} of {len(index)} work order(s)")
+    return kept
+
+
+def _dry_run(
+    ctx: Context,
+    capped: list[dict],
+    bdir: Path,
+    model: str,
+    budget: float | None = None,
+) -> None:
+    """`--dry-run`: show exactly what the run would do — the same pre-flight plan a
+    real run confirms, work orders already on disk under `bdir` for inspection —
+    then stop. No model call, no source edit."""
+    _preflight(ctx, capped, bdir, model, yes=True, budget=budget)
+    ui.note(
+        f"fix: --dry-run — no model called, nothing edited; work orders are in "
+        f"{ctx.rel(str(bdir))}"
+    )
 
 
 def _capped(index: list[dict]) -> list[dict]:
@@ -1209,23 +1328,30 @@ def fix_check(
     cmd: list[str] | None = None,
     yes: bool = False,
     quiet: bool = False,
+    only: str | None = None,
+    dry: bool = False,
+    budget: float | None = None,
 ) -> int:
     """`documate --check --ai`: run the gate, show the pre-flight plan and get
     consent, draft every emitted work order, regenerate the docs (drafted
     docstrings change the generated tier), then re-run the gate — its verdict
     is the exit code. Declining leaves the first gate's verdict untouched.
+    `only` narrows the orders to one file glob; `dry` stops after the plan.
     With `quiet` (bare `--ai`, where seeding already reported) the leading gate
     is internal plumbing: a pass collapses to one line, failures stay loud."""
     base = base or ctx.config.default_base
     bdir = ctx.root / ".documate" / "briefs"
     rc = check.run(ctx, base, briefs_dir=bdir, quiet=quiet)
-    index = json.loads((bdir / "briefs.json").read_text())
+    index = _only(json.loads((bdir / "briefs.json").read_text()), only)
     if not index:
         if quiet and rc == 0:
             ui.ok("fix: gate passed — drafts verified")
         return rc
     capped = _capped(index)
-    go = _preflight(ctx, capped, bdir, model, yes)
+    if dry:
+        _dry_run(ctx, capped, bdir, model, budget)
+        return rc
+    go = _preflight(ctx, capped, bdir, model, yes, budget)
     if go is None:
         return 1
     if not go:
@@ -1233,21 +1359,48 @@ def fix_check(
     ui.header(f"fix: drafting {len(capped)} work order(s) with {model}")
     batch, agentic = _split(capped)
     spend = _Spend()  # one meter across both paths: the run's whole bill
+    touched: set = set()
+    shots = undo.snapshot(ctx, capped)
     try:
         if batch:
-            _draft_batch(ctx, batch, bdir, model, timeout, cmd, spend)
+            _draft_batch(ctx, batch, bdir, model, timeout, cmd, spend, touched, budget)
         if agentic:
-            _draft(ctx, agentic, bdir, model, timeout, cmd, spend)
+            _draft(ctx, agentic, bdir, model, timeout, cmd, spend, touched, budget)
     except KeyboardInterrupt:
         return _interrupted()
     finally:  # the --stats bill: even an interrupted run's tokens were spent
         stats.add_spend(ctx, model, spend.tokens, spend.usd)
+        _run_format(ctx, touched)
+        undo.record(ctx, shots, capped, "repair", model)
     _reindex(ctx)
     docs.run(ctx, quiet=True)
     rc = check.run(ctx, base, briefs_dir=bdir, quiet=True)
     if rc == 0:
         ui.ok("fix: gate passed — drafts verified")
     return rc
+
+
+def _run_format(ctx: Context, touched: set[str]) -> None:
+    """Run the repo's configured `format_cmd` over the source files a run touched,
+    before the re-index reads them — inserted doc comments then land already
+    conforming to the repo's formatter (a pinned clang-format CI gate would
+    otherwise fail on every long `@brief` line the model wrote). The command is
+    split shell-style with the repo-relative paths appended; any failure warns
+    and never sinks the run — the drafts are already on disk."""
+    cmd = ctx.config.format_cmd
+    if not cmd or not touched:
+        return
+    argv = shlex.split(cmd) + sorted(touched)
+    try:
+        r = subprocess.run(argv, cwd=ctx.root, capture_output=True, timeout=120)
+    except (OSError, subprocess.SubprocessError) as e:
+        ui.warn(f"fix: format_cmd failed — {e}")
+        return
+    if r.returncode != 0:
+        tail = r.stderr.decode(errors="replace").strip().splitlines()
+        ui.warn("fix: format_cmd exited nonzero" + (f" — {tail[-1]}" if tail else ""))
+    else:
+        ui.note(f"fix: format_cmd ran over {len(touched)} file(s)")
 
 
 def _reindex(ctx: Context) -> None:
@@ -1280,23 +1433,32 @@ def fix_docs(
     timeout: int = _TIMEOUT,
     cmd: list[str] | None = None,
     yes: bool = False,
+    only: str | None = None,
+    dry: bool = False,
+    budget: float | None = None,
 ) -> int:
     """`documate --ai`: the fresh-repo seeding pass. Generate the pages, show
     the pre-flight plan and get consent, draft a docstring for every
     undocumented symbol (callees first), then regenerate so the new docstrings
-    land on the pages. Nonzero when any draft failed (or consent was
+    land on the pages. `only` narrows the orders to one file glob; `dry` stops
+    after the plan. Nonzero when any draft failed (or consent was
     impossible unattended); declining is a clean exit-0 no-op. The drafts
     themselves are uncommitted edits awaiting review."""
     rc = docs.run(ctx)
     if rc != 0:
         return rc
     bdir = ctx.root / ".documate" / "briefs"
-    index = briefs.emit(ctx, ctx.config.default_base, [], bdir, undocumented="all")
+    index = _only(
+        briefs.emit(ctx, ctx.config.default_base, [], bdir, undocumented="all"), only
+    )
     if not index:
-        ui.ok("fix: every symbol is documented — nothing to draft")
+        ui.ok("fix: nothing to draft" + ("" if only else " — every symbol is documented"))
         return 0
     capped = _capped(index)
-    go = _preflight(ctx, capped, bdir, model, yes)
+    if dry:
+        _dry_run(ctx, capped, bdir, model, budget)
+        return 0
+    go = _preflight(ctx, capped, bdir, model, yes, budget)
     if go is None:
         return 1
     if not go:
@@ -1305,15 +1467,23 @@ def fix_docs(
     batch, agentic = _split(capped)
     spend = _Spend()  # one meter across both paths: the run's whole bill
     failures = 0
+    touched: set = set()
+    shots = undo.snapshot(ctx, capped)
     try:
         if batch:
-            failures += _draft_batch(ctx, batch, bdir, model, timeout, cmd, spend)
+            failures += _draft_batch(
+                ctx, batch, bdir, model, timeout, cmd, spend, touched, budget
+            )
         if agentic:
-            failures += _draft(ctx, agentic, bdir, model, timeout, cmd, spend)
+            failures += _draft(
+                ctx, agentic, bdir, model, timeout, cmd, spend, touched, budget
+            )
     except KeyboardInterrupt:
         return _interrupted()
     finally:  # the --stats bill: even an interrupted run's tokens were spent
         stats.add_spend(ctx, model, spend.tokens, spend.usd)
+        _run_format(ctx, touched)
+        undo.record(ctx, shots, capped, "seed", model)
     _reindex(ctx)
     docs.run(ctx, quiet=True)
     # Re-emit so briefs.json reflects what still needs drafting (next run's map);
@@ -1330,24 +1500,34 @@ def fix_rewrite(
     timeout: int = _TIMEOUT,
     cmd: list[str] | None = None,
     yes: bool = False,
+    only: str | None = None,
+    dry: bool = False,
+    budget: float | None = None,
 ) -> int:
     """`documate --ai <model> --rewrite`: re-emit every C/C++ symbol's doc comment
     as Doxygen (`/** */` with `@brief`/`@param`/`@return`) — the marker Doxygen reads,
     unlike the plain `//` seeding writes. Generate the pages, show the pre-flight plan
     and get consent, draft each rewrite (existing docs replaced in place, undocumented
-    ones seeded), then regenerate so the pages reflect the new prose. Nonzero when any
+    ones seeded), then regenerate so the pages reflect the new prose. `only` narrows
+    the orders to one file glob; `dry` stops after the plan. Nonzero when any
     draft failed (or consent was impossible unattended); declining is a clean exit-0
     no-op. The drafts are uncommitted edits awaiting review."""
     rc = docs.run(ctx)
     if rc != 0:
         return rc
     bdir = ctx.root / ".documate" / "briefs"
-    index = briefs.emit(ctx, ctx.config.default_base, [], bdir, rewrite=True)
+    index = _only(briefs.emit(ctx, ctx.config.default_base, [], bdir, rewrite=True), only)
     if not index:
-        ui.ok("fix: no C/C++ symbols to rewrite")
+        ui.ok(
+            "fix: no C/C++ symbols to rewrite"
+            + (" (everything is already Doxygen, or --only matched nothing)" if only else "")
+        )
         return 0
     capped = _capped(index)
-    go = _preflight(ctx, capped, bdir, model, yes)
+    if dry:
+        _dry_run(ctx, capped, bdir, model, budget)
+        return 0
+    go = _preflight(ctx, capped, bdir, model, yes, budget)
     if go is None:
         return 1
     if not go:
@@ -1355,12 +1535,18 @@ def fix_rewrite(
     ui.header(f"fix: rewriting {len(capped)} doc comment(s) with {model}")
     spend = _Spend()
     failures = 0
+    touched: set = set()
+    shots = undo.snapshot(ctx, capped)
     try:
-        failures += _draft_batch(ctx, capped, bdir, model, timeout, cmd, spend)
+        failures += _draft_batch(
+            ctx, capped, bdir, model, timeout, cmd, spend, touched, budget
+        )
     except KeyboardInterrupt:
         return _interrupted()
     finally:  # the --stats bill: even an interrupted run's tokens were spent
         stats.add_spend(ctx, model, spend.tokens, spend.usd)
+        _run_format(ctx, touched)
+        undo.record(ctx, shots, capped, "rewrite", model)
     _reindex(ctx)
     docs.run(ctx, quiet=True)
     return 1 if failures else 0

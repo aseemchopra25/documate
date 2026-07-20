@@ -234,6 +234,34 @@ class Hotspots:
     coupled: list[tuple[str, str, int]]
 
 
+def _repo_name(ctx: Context) -> str:
+    """The name the generated pages call this repo.
+
+    Config `project_name` wins. Otherwise, when the root is a whole checkout, the
+    name comes from the git common dir's parent — the main checkout's directory —
+    so a linked worktree titles its pages exactly like the checkout that committed
+    them and `--check` stays green there (the worktree's own dirname would differ
+    on every page). A monorepo sub-tree root keeps its own basename, as does any
+    non-git tree."""
+    if ctx.config.project_name:
+        return ctx.config.project_name
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(ctx.root), "rev-parse", "--show-toplevel", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.splitlines()
+        top, common = Path(out[0]), Path(out[1])
+    except (OSError, subprocess.SubprocessError, IndexError):
+        return ctx.root.name
+    if not common.is_absolute():
+        common = (ctx.root / common).resolve()
+    if top == ctx.root:
+        return common.parent.name
+    return ctx.root.name
+
+
 def _head_rev(ctx: Context) -> str | None:
     """Current HEAD's short hash — the pin `documate` mines hotspots at.
     None (no hotspots) without git or before the first commit."""
@@ -782,7 +810,7 @@ def build_model(ctx: Context, hot_rev: str | None = None) -> Model:
     total = documented + undocumented
     dedup = sorted({(s, d) for s, d, _ in edges})
     return Model(
-        root_name=ctx.root.name,
+        root_name=_repo_name(ctx),
         pages=pages,
         module_edges=dedup,  # renderers cap what they draw (_EDGE_CAP)
         docs_rel=ctx.rel(str(ctx.config.docs_dir)),

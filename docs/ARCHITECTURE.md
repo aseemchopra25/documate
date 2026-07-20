@@ -18,6 +18,7 @@ flowchart LR
   check --> docs
   check --> drift
   check --> ui
+  cli --> briefs
   cli --> check
   cli --> config
   cli --> core
@@ -26,6 +27,7 @@ flowchart LR
   cli --> site
   cli --> stats
   cli --> ui
+  cli --> undo
   core --> config
   core --> graphdb
   docs --> core
@@ -42,6 +44,7 @@ flowchart LR
   prose --> extract
   prose --> stats
   prose --> ui
+  prose --> undo
   resolve --> core
   site --> core
   site --> docs
@@ -49,6 +52,8 @@ flowchart LR
   stats --> core
   stats --> docs
   stats --> ui
+  undo --> core
+  undo --> ui
 ```
 
 ## [`src/documate/cli.py`](architecture/src.documate.cli.md)
@@ -71,11 +76,39 @@ cli.py — one command. Bare `documate` does the whole job; flags pick a mode.
 Everything else is an override: `documate PATH` (or --root) points the same
 binary at any repo or monorepo sub-tree, --base picks the drift ref, --full
 re-indexes from scratch, --html adds the static site, --briefs emits work
-orders whenever the gate runs. One Context per invocation, no import-time
-globals. `--watch --ai` is refused: a model call on every save is a token
-faucet — run --ai as a deliberate one-shot.
+orders whenever the gate runs. --only/--dry-run/--budget aim, preview, and
+cap an --ai run; --undo reverts the last one from its recorded manifest;
+--list-undocumented prints the missing-docs map as JSON. One Context per
+invocation, no import-time globals. `--watch --ai` is refused: a model call
+on every save is a token faucet — run --ai as a deliberate one-shot.
 
-**depends on** [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/config.py`](architecture/src.documate.config.md), [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/site.py`](architecture/src.documate.site.md), [`src/documate/stats.py`](architecture/src.documate.stats.md), [`src/documate/ui.py`](architecture/src.documate.ui.md)
+**depends on** [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/config.py`](architecture/src.documate.config.md), [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/site.py`](architecture/src.documate.site.md), [`src/documate/stats.py`](architecture/src.documate.stats.md), [`src/documate/ui.py`](architecture/src.documate.ui.md), [`src/documate/undo.py`](architecture/src.documate.undo.md)
+
+## [`src/documate/briefs.py`](architecture/src.documate.briefs.md)
+
+briefs.py — O(diff) work orders for a prose-writing model (or a human).
+
+`documate --briefs` turns the gate's findings into self-contained files an
+LLM can act on without exploring the repo — the integration surface is *a file you
+hand to a model*, never a server (see notes/v2-direction.md). Three kinds:
+
+  drift         an authored page's anchored code changed: re-verify the prose,
+                edit only what the change falsified, re-pin the sig.
+  undocumented  a symbol changed vs --base and has no docstring/doc-comment:
+                draft one.
+  module        a file has no module-level prose (the architecture page's
+                section lead) — seeding scope only, never diff-driven.
+
+Each brief packs everything the task needs: the symbol's current source, the diff
+vs base, the page as committed (drift kind), the docstrings of direct callers and
+callees (how the thing is *used*), and what its tests assert. Undocumented briefs
+are ordered callees-first so drafted summaries compose instead of being guessed.
+A `briefs.json` index beside the briefs is the machine-readable half: the wrapper
+reads it, feeds each brief to the model, then re-runs `documate --check` — the gate
+itself is the verification loop. Emission is O(diff): a quiet repo writes an empty
+index and nothing else. Stdlib only.
+
+**depends on** [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/drift.py`](architecture/src.documate.drift.md), [`src/documate/extract.py`](architecture/src.documate.extract.md), [`src/documate/resolve.py`](architecture/src.documate.resolve.md)  ·  **used by** [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/cli.py`](architecture/src.documate.cli.md), [`src/documate/prose.py`](architecture/src.documate.prose.md)
 
 ## [`src/documate/check.py`](architecture/src.documate.check.md)
 
@@ -127,6 +160,10 @@ The two list keys EXTEND their defaults rather than replace them — adding your
 one vendored tree must not cost you the stock list. Prefix an entry with `!` to
 drop a default (`"!/vendor/"` un-skips vendor/).
     default_base   git ref `check` compares against                ("main")
+    project_name   the name the generated pages carry (default: derived from the
+                   checkout, worktree-safe via the git common dir)
+    format_cmd     command --ai runs over the source files it touched, paths
+                   appended ("clang-format -i"); None skips formatting
 
 Unknown config keys are a hard error — a typo silently doing nothing is the exact rot
 documate exists to stop. Stdlib only.
@@ -142,7 +179,7 @@ resolves the root, loads its config, wires the graph adapter, and hands this Con
 every command. No import-time globals — the same process can point at different roots,
 and nothing is hard-bound to one checkout.
 
-**exposes** `Context`  ·  **depends on** [`src/documate/config.py`](architecture/src.documate.config.md), [`src/documate/graphdb.py`](architecture/src.documate.graphdb.md)  ·  **used by** [`src/documate/anchors.py`](architecture/src.documate.anchors.md), [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/cli.py`](architecture/src.documate.cli.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/drift.py`](architecture/src.documate.drift.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/resolve.py`](architecture/src.documate.resolve.md), [`src/documate/site.py`](architecture/src.documate.site.md), [`src/documate/stats.py`](architecture/src.documate.stats.md)
+**exposes** `Context`  ·  **depends on** [`src/documate/config.py`](architecture/src.documate.config.md), [`src/documate/graphdb.py`](architecture/src.documate.graphdb.md)  ·  **used by** [`src/documate/anchors.py`](architecture/src.documate.anchors.md), [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/cli.py`](architecture/src.documate.cli.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/drift.py`](architecture/src.documate.drift.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/resolve.py`](architecture/src.documate.resolve.md), [`src/documate/site.py`](architecture/src.documate.site.md), [`src/documate/stats.py`](architecture/src.documate.stats.md), [`src/documate/undo.py`](architecture/src.documate.undo.md)
 
 ## [`src/documate/docs.py`](architecture/src.documate.docs.md)
 
@@ -165,7 +202,7 @@ The build is split model -> render on purpose: `build_model` returns plain datac
 into the same model. Output via `ui`, logic stdlib only; graph needed (the CLI
 indexes before calling in).
 
-**exposes** `Model`, `Page`, `_mermaid_lines`, `_slug`, `_tour`, `build_model`  ·  **depends on** [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/extract.py`](architecture/src.documate.extract.md), [`src/documate/stats.py`](architecture/src.documate.stats.md), [`src/documate/ui.py`](architecture/src.documate.ui.md)  ·  **used by** [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/cli.py`](architecture/src.documate.cli.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/site.py`](architecture/src.documate.site.md), [`src/documate/stats.py`](architecture/src.documate.stats.md)
+**exposes** `Model`, `Page`, `_dir`, `_mermaid_lines`, `_slug`, `_tail`, `_tour`, `build_model`  ·  **depends on** [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/extract.py`](architecture/src.documate.extract.md), [`src/documate/stats.py`](architecture/src.documate.stats.md), [`src/documate/ui.py`](architecture/src.documate.ui.md)  ·  **used by** [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/cli.py`](architecture/src.documate.cli.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/site.py`](architecture/src.documate.site.md), [`src/documate/stats.py`](architecture/src.documate.stats.md)
 
 ## [`src/documate/prose.py`](architecture/src.documate.prose.md)
 
@@ -201,7 +238,7 @@ layer can never trigger on its own output. The model dependency stays behind
 the subprocess boundary; output goes through `ui` (a live progress bar on a
 terminal, a plain transcript in CI).
 
-**depends on** [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/extract.py`](architecture/src.documate.extract.md), [`src/documate/stats.py`](architecture/src.documate.stats.md), [`src/documate/ui.py`](architecture/src.documate.ui.md)  ·  **used by** [`src/documate/cli.py`](architecture/src.documate.cli.md)
+**depends on** [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/extract.py`](architecture/src.documate.extract.md), [`src/documate/stats.py`](architecture/src.documate.stats.md), [`src/documate/ui.py`](architecture/src.documate.ui.md), [`src/documate/undo.py`](architecture/src.documate.undo.md)  ·  **used by** [`src/documate/cli.py`](architecture/src.documate.cli.md)
 
 ## [`src/documate/site.py`](architecture/src.documate.site.md)
 
@@ -256,58 +293,30 @@ for non-terminals, and soft_wrap keeps messages greppable at any width.
 Stream contract is preserved from the print() era: successes and advisories
 go to stdout, gate failures to stderr — CI redirects keep meaning.
 
-**used by** [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/cli.py`](architecture/src.documate.cli.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/site.py`](architecture/src.documate.site.md), [`src/documate/stats.py`](architecture/src.documate.stats.md)
+**used by** [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/cli.py`](architecture/src.documate.cli.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/site.py`](architecture/src.documate.site.md), [`src/documate/stats.py`](architecture/src.documate.stats.md), [`src/documate/undo.py`](architecture/src.documate.undo.md)
 
-## [`src/documate/anchors.py`](architecture/src.documate.anchors.md)
+## [`src/documate/undo.py`](architecture/src.documate.undo.md)
 
-anchors.py — scan authored docs for `documents:` anchors and validate them.
+undo.py — the --ai run manifest, and `documate --undo` to revert it.
 
-An authored page (hand-written markdown under docs/) declares what code it describes:
+Model output is indistinguishable from hand-written prose once it lands, which is
+what makes reviewing (and unpicking) a big run slow. Two answers, neither of which
+marks the files themselves — nothing documate writes into a repo names the tool:
 
-    <!-- documents: sym:unlock -->               (prose, invisible HTML comment)
-    <!-- documents: sym:unlock sig:0f3a9c1b2d4e5f60 -->   (pinned to a fingerprint)
-    %% documents: sym:ble_handler                 (inside a mermaid block)
+  record   every --ai run leaves `.documate/last-run.json`: mode, model, which
+           file:symbol pairs were drafted, and per touched file the full
+           before-text plus a hash of what the run left behind.
+  undo     `documate --undo` restores each recorded file's before-text — but only
+           when its current content still hashes to what the run left. A file
+           edited since is refused, file by file, and stays in the manifest; git
+           remains the real undo once drafts are committed, this one works before
+           any commit exists.
 
-`build_index` scans every .md under docs_dir into `{anchor: [pages]}` — graph-free and
-deterministic, computed fresh each run (nothing to commit or keep in sync). Generated
-pages carry no anchors (their freshness is checked by regeneration instead), so this
-is effectively the authored tier's map. `validate` resolves each anchor to confirm the
-code it names still exists; a sym: against a missing graph degrades to a warning.
+Records from the same process merge (bare `--ai` chains a seeding pass into a
+repair pass — one invocation, one manifest); a new invocation replaces the
+manifest, so `--undo` always means "the last `--ai` run". Stdlib only.
 
-A `sig:` token pins the *preceding* sym: to the fingerprint of the code the author
-verified the prose against (drift prints the current value). With a sig, drift for
-that page/anchor is decided by fingerprint comparison instead of file-level git diff —
-per-symbol and base-ref-free. The sig lives inline in the anchor, never in a lock
-file: it travels with the prose it protects and updates in the same edit.
-Stdlib only.
-
-**exposes** `scan`  ·  **depends on** [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/resolve.py`](architecture/src.documate.resolve.md)  ·  **used by** [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/drift.py`](architecture/src.documate.drift.md)
-
-## [`src/documate/briefs.py`](architecture/src.documate.briefs.md)
-
-briefs.py — O(diff) work orders for a prose-writing model (or a human).
-
-`documate --briefs` turns the gate's findings into self-contained files an
-LLM can act on without exploring the repo — the integration surface is *a file you
-hand to a model*, never a server (see notes/v2-direction.md). Three kinds:
-
-  drift         an authored page's anchored code changed: re-verify the prose,
-                edit only what the change falsified, re-pin the sig.
-  undocumented  a symbol changed vs --base and has no docstring/doc-comment:
-                draft one.
-  module        a file has no module-level prose (the architecture page's
-                section lead) — seeding scope only, never diff-driven.
-
-Each brief packs everything the task needs: the symbol's current source, the diff
-vs base, the page as committed (drift kind), the docstrings of direct callers and
-callees (how the thing is *used*), and what its tests assert. Undocumented briefs
-are ordered callees-first so drafted summaries compose instead of being guessed.
-A `briefs.json` index beside the briefs is the machine-readable half: the wrapper
-reads it, feeds each brief to the model, then re-runs `documate --check` — the gate
-itself is the verification loop. Emission is O(diff): a quiet repo writes an empty
-index and nothing else. Stdlib only.
-
-**depends on** [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/drift.py`](architecture/src.documate.drift.md), [`src/documate/extract.py`](architecture/src.documate.extract.md), [`src/documate/resolve.py`](architecture/src.documate.resolve.md)  ·  **used by** [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/prose.py`](architecture/src.documate.prose.md)
+**depends on** [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/ui.py`](architecture/src.documate.ui.md)  ·  **used by** [`src/documate/cli.py`](architecture/src.documate.cli.md), [`src/documate/prose.py`](architecture/src.documate.prose.md)
 
 ## [`src/documate/drift.py`](architecture/src.documate.drift.md)
 
@@ -341,26 +350,6 @@ membership. `sym:` needs the graph and degrades without it. Stdlib only.
 
 **depends on** [`src/documate/anchors.py`](architecture/src.documate.anchors.md), [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/resolve.py`](architecture/src.documate.resolve.md)  ·  **used by** [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/check.py`](architecture/src.documate.check.md)
 
-## [`src/documate/graphdb.py`](architecture/src.documate.graphdb.md)
-
-graphdb.py — documate's only door to the code graph.
-
-Wraps the indexing engine (`._engine`). Every other documate module talks to THIS,
-never to the engine internals or the sqlite schema. Refactor or swap the engine and
-only this file moves — that's the decoupling the whole layering is about.
-
-Two halves:
-  index()   drives the engine to (re)build the graph at config.graph_db.
-  reads     name lookup / callees / reverse-deps over a read-only connection. Reads
-            DEGRADE: a missing or locked db returns empty, never raises — a sym: check
-            soft-passes when the graph isn't there. It's an ephemeral artifact; never
-            gate on its absence.
-
-The sqlite schema (nodes: name/kind/qualified_name/file_path/line_start; edges:
-kind/source_qualified/target_qualified) is referenced ONLY here.
-
-**exposes** `GraphDB`  ·  **used by** [`src/documate/core.py`](architecture/src.documate.core.md)
-
 ## [`src/documate/extract.py`](architecture/src.documate.extract.md)
 
 extract.py — pull the prose out of source, per language.
@@ -390,6 +379,51 @@ One namespace:
 ephemeral artifact. Stdlib only.
 
 **exposes** `resolve`  ·  **depends on** [`src/documate/core.py`](architecture/src.documate.core.md)  ·  **used by** [`src/documate/anchors.py`](architecture/src.documate.anchors.md), [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/drift.py`](architecture/src.documate.drift.md)
+
+## [`src/documate/anchors.py`](architecture/src.documate.anchors.md)
+
+anchors.py — scan authored docs for `documents:` anchors and validate them.
+
+An authored page (hand-written markdown under docs/) declares what code it describes:
+
+    <!-- documents: sym:unlock -->               (prose, invisible HTML comment)
+    <!-- documents: sym:unlock sig:0f3a9c1b2d4e5f60 -->   (pinned to a fingerprint)
+    %% documents: sym:ble_handler                 (inside a mermaid block)
+
+`build_index` scans every .md under docs_dir into `{anchor: [pages]}` — graph-free and
+deterministic, computed fresh each run (nothing to commit or keep in sync). Generated
+pages carry no anchors (their freshness is checked by regeneration instead), so this
+is effectively the authored tier's map. `validate` resolves each anchor to confirm the
+code it names still exists; a sym: against a missing graph degrades to a warning.
+
+A `sig:` token pins the *preceding* sym: to the fingerprint of the code the author
+verified the prose against (drift prints the current value). With a sig, drift for
+that page/anchor is decided by fingerprint comparison instead of file-level git diff —
+per-symbol and base-ref-free. The sig lives inline in the anchor, never in a lock
+file: it travels with the prose it protects and updates in the same edit.
+Stdlib only.
+
+**exposes** `scan`  ·  **depends on** [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/resolve.py`](architecture/src.documate.resolve.md)  ·  **used by** [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/drift.py`](architecture/src.documate.drift.md)
+
+## [`src/documate/graphdb.py`](architecture/src.documate.graphdb.md)
+
+graphdb.py — documate's only door to the code graph.
+
+Wraps the indexing engine (`._engine`). Every other documate module talks to THIS,
+never to the engine internals or the sqlite schema. Refactor or swap the engine and
+only this file moves — that's the decoupling the whole layering is about.
+
+Two halves:
+  index()   drives the engine to (re)build the graph at config.graph_db.
+  reads     name lookup / callees / reverse-deps over a read-only connection. Reads
+            DEGRADE: a missing or locked db returns empty, never raises — a sym: check
+            soft-passes when the graph isn't there. It's an ephemeral artifact; never
+            gate on its absence.
+
+The sqlite schema (nodes: name/kind/qualified_name/file_path/line_start; edges:
+kind/source_qualified/target_qualified) is referenced ONLY here.
+
+**exposes** `GraphDB`  ·  **used by** [`src/documate/core.py`](architecture/src.documate.core.md)
 
 ## [`scripts/coverage_report.py`](architecture/scripts.coverage_report.md)
 

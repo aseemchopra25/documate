@@ -23,7 +23,9 @@ from __future__ import annotations
 import html
 import json
 import os
+import posixpath
 import re
+import subprocess
 from dataclasses import dataclass
 
 from . import ui
@@ -32,8 +34,10 @@ from .docs import (
     _EDGE_CAP,
     Model,
     Page,
+    _dir,
     _mermaid_lines,
     _slug,
+    _tail,
     _tour,
     build_model,
 )
@@ -228,6 +232,12 @@ pre.mermaid{border:1px solid var(--line);border-radius:14px;background:
 .api-entry p{margin:.5rem 0;font-size:.92rem}
 .xref{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.7rem;font-size:.75rem;color:var(--muted)}
 .xref code{background:var(--raise);border:1px solid var(--line-soft);border-radius:5px;padding:.06em .3em;color:var(--ink)}
+.doc table{border-collapse:collapse;margin:1.1rem 0;font-size:.88rem}
+.doc th,.doc td{border:1px solid var(--line);padding:.4rem .7rem;text-align:left;vertical-align:top}
+.doc th{background:var(--raise);font-weight:600}
+dl.params{margin:.7rem 0 .2rem;font-size:.88rem;border-top:1px solid var(--line-soft)}
+dl.params dt{font-family:var(--mono);color:var(--strong);margin:.55rem 0 .1rem}
+dl.params dd{margin:0 0 .35rem;color:var(--muted)}
 details{margin-top:1.4rem;border:1px dashed var(--line);border-radius:10px;padding:.2rem .9rem;color:var(--muted)}
 summary{cursor:pointer;padding:.6rem 0;font-size:.86rem;font-weight:600}
 ul{padding-left:1.2rem}
@@ -346,10 +356,72 @@ def _inline(text: str) -> str:
     return _CODE_RE.sub(r"<code>\1</code>", html.escape(text))
 
 
+_DOXY_TAG = re.compile(r"^[@\\](brief|param|return|returns|retval)\b\s*(.*)$")
+
+
+def _doxygen(text: str) -> str | None:
+    """A Doxygen-marked doc (`@brief`/`@param`/`@return` lines, what --rewrite
+    emits for C) as structured HTML — the brief as the lead paragraph, the
+    contract as a definition list — or None when the text carries no markers
+    (the plain-prose path renders it). Continuation lines fold into the tag
+    above them; unmarked lines stay ordinary paragraphs."""
+    lines = text.strip().splitlines()
+    if not any(_DOXY_TAG.match(ln.strip()) for ln in lines):
+        return None
+    brief: list[str] = []
+    params: list[list[str]] = []
+    ret: list[str] = []
+    rest: list[str] = []
+    cur: list[str] | None = None
+    for raw in lines:
+        s = raw.strip()
+        m = _DOXY_TAG.match(s)
+        if m:
+            tag, val = m.group(1), m.group(2)
+            if tag == "brief":
+                brief.append(val)
+                cur = brief
+            elif tag == "param":
+                val = re.sub(r"^\[[^\]]*\]\s*", "", val)  # @param[in] direction
+                bits = val.split(None, 1)
+                params.append([bits[0] if bits else "", bits[1] if len(bits) > 1 else ""])
+                cur = params[-1]
+            else:  # return / returns / retval
+                ret.append(val)
+                cur = ret
+        elif s and cur is not None:
+            if params and cur is params[-1]:
+                cur[1] += " " + s  # a param description wrapping to the next line
+            else:
+                cur.append(s)
+        elif s:
+            rest.append(s)
+        else:
+            cur = None
+    parts: list[str] = []
+    if brief:
+        parts.append(f"<p>{_inline(' '.join(brief))}</p>")
+    if rest:
+        parts.append(f"<p>{_inline(' '.join(rest))}</p>")
+    if params or ret:
+        rows = "".join(
+            f"<dt><code>{html.escape(n)}</code></dt><dd>{_inline(d)}</dd>"
+            for n, d in params
+        )
+        if ret:
+            rows += f"<dt>returns</dt><dd>{_inline(' '.join(ret))}</dd>"
+        parts.append(f'<dl class="params">{rows}</dl>')
+    return "\n".join(parts)
+
+
 def _prose(text: str) -> str:
-    """Docstring text -> HTML blocks: blank-line-separated paragraphs, with chunks whose
+    """Docstring text -> HTML blocks: a Doxygen-marked doc renders structured
+    (`_doxygen`); otherwise blank-line-separated paragraphs, with chunks whose
     every line is indented (the docstring convention for tables/diagrams/examples, and
     what survives `ast.get_docstring`'s dedent) kept verbatim in a <pre>."""
+    structured = _doxygen(text)
+    if structured is not None:
+        return structured
     blocks = []
     for chunk in re.split(r"\n\s*\n", text.strip()):
         lines = chunk.splitlines()
@@ -367,6 +439,7 @@ class Guide:
     slug: str  # "guides.how-it-works"
     title: str  # first `# ` heading, else the rel path
     text: str  # raw markdown, anchors and all
+    rel: str = ""  # path under docs_dir ("guides/how-it-works.md") — link resolution
 
 
 def _md_inline(text: str) -> str:
@@ -420,6 +493,36 @@ def _markdown(text: str) -> str:
                 i += 1
             i -= 1
             out.append("<ul>" + "".join(items) + "</ul>")
+        elif s.startswith("|"):
+            flush()
+            rows = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                cells = lines[i].strip().strip("|").split("|")
+                rows.append([c.strip() for c in cells])
+                i += 1
+            i -= 1
+            # a |---|---| second row marks the first as the header
+            head: list[str] | None = None
+            if (
+                len(rows) > 1
+                and any(rows[1])
+                and all(re.fullmatch(r":?-+:?", c) for c in rows[1] if c)
+            ):
+                head, rows = rows[0], rows[2:]
+            tbl = ["<table>"]
+            if head:
+                tbl.append(
+                    "<thead><tr>"
+                    + "".join(f"<th>{_md_inline(c)}</th>" for c in head)
+                    + "</tr></thead>"
+                )
+            tbl.append("<tbody>")
+            for r in rows:
+                tbl.append(
+                    "<tr>" + "".join(f"<td>{_md_inline(c)}</td>" for c in r) + "</tr>"
+                )
+            tbl.append("</tbody></table>")
+            out.append("".join(tbl))
         elif not s:
             flush()
         else:
@@ -446,8 +549,91 @@ def _guides(ctx: Context) -> list[Guide]:
         title = next(
             (ln[2:].strip() for ln in text.splitlines() if ln.startswith("# ")), rel
         )
-        found.append(Guide(rel.replace("/", ".").removesuffix(".md"), title, text))
+        found.append(Guide(rel.replace("/", ".").removesuffix(".md"), title, text, rel))
     return found
+
+
+def _remote_base(ctx: Context) -> str | None:
+    """The https base of the `origin` remote (git@/ssh/https forms normalized) —
+    where guide links that point outside the docs tree land, as blob URLs.
+    None without a usable remote; the caller then treats such links as dead."""
+    try:
+        url = subprocess.run(
+            ["git", "-C", str(ctx.root), "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.match(r"(?:ssh://)?git@([^:/]+)[:/](.+?)(?:\.git)?/?$", url)
+    if m:
+        return f"https://{m.group(1)}/{m.group(2)}"
+    m = re.match(r"(https?://.+?)(?:\.git)?/?$", url)
+    return m.group(1) if m else None
+
+
+def _page_hrefs(model: Model, guides: list[Guide]) -> dict[str, str]:
+    """{docs-relative .md path: site .html file} for everything the site renders —
+    guides, the two headline pages, and each subsystem page under both committed
+    layouts (flat and grouped), so a guide's link works whichever one is on disk."""
+    hrefs = {"README.md": "index.html", "ARCHITECTURE.md": "architecture.html"}
+    for p in model.pages:
+        hrefs[f"architecture/{p.slug}.md"] = f"{p.slug}.html"
+        d = _dir(p.rel)
+        hrefs[f"architecture/{_slug(d)}/{_tail(d, p)}.md"] = f"{p.slug}.html"
+        hrefs.setdefault(f"architecture/{_slug(d)}/README.md", "index.html")
+    for g in guides:
+        hrefs[g.rel] = f"{g.slug}.html"
+    return hrefs
+
+
+_SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
+
+
+def _resolve_links(ctx: Context, model: Model, guides: list[Guide]) -> list[str]:
+    """Rewrite every relative link in the authored guides to its real site target
+    — a sibling .md becomes its .html page, a repo file becomes the remote's blob
+    URL at default_base — and return a line per link that resolves to nothing
+    (the caller fails the build: a shipped dead link is doc rot, the exact thing
+    the tool exists to stop). Scheme-carrying links (http, mailto) and bare
+    #anchors pass through; fenced code blocks are left untouched."""
+    hrefs = _page_hrefs(model, guides)
+    remote = _remote_base(ctx)
+    branch = ctx.config.default_base
+    dead: list[str] = []
+    for g in guides:
+        at = posixpath.dirname(g.rel)
+
+        def swap(m: re.Match, _g: Guide = g, _at: str = at) -> str:
+            """One matched markdown link, rewritten to its site target — or kept
+            as written, recording it dead when nothing resolves."""
+            label, target = m.group(1), m.group(2)
+            base, _, frag = target.partition("#")
+            if _SCHEME.match(target) or not base:
+                return m.group(0)
+            tail = f"#{frag}" if frag else ""
+            nd = posixpath.normpath(posixpath.join(_at, base))
+            if nd in hrefs:
+                return f"[{label}]({hrefs[nd]}{tail})"
+            rp = posixpath.normpath(posixpath.join(model.docs_rel, _at, base))
+            if not rp.startswith("..") and (ctx.root / rp).exists():
+                if remote:
+                    return f"[{label}]({remote}/blob/{branch}/{rp})"
+                dead.append(f"{_g.rel}: ({target}) — repo file, but no git remote to link it")
+                return m.group(0)
+            dead.append(f"{_g.rel}: ({target}) — no site page or repo file there")
+            return m.group(0)
+
+        out, fenced = [], False
+        for ln in g.text.splitlines():
+            if ln.strip().startswith("```"):
+                fenced = not fenced
+                out.append(ln)
+            else:
+                out.append(ln if fenced else _LINK_RE.sub(swap, ln))
+        g.text = "\n".join(out)
+    return dead
 
 
 def _mermaid(kind: str, edges) -> str:
@@ -830,7 +1016,17 @@ def run(ctx: Context) -> int:
         ui.fail("site: graph absent — indexing failed?")
         return 1
     guides = _guides(ctx)
-    want = render(build_model(ctx), guides)
+    model = build_model(ctx)
+    dead = _resolve_links(ctx, model, guides)
+    if dead:
+        for d in dead:
+            ui.detail(f"DEAD  {d}", err=True, style="red")
+        ui.fail(
+            f"site: {len(dead)} dead link(s) in authored pages — fix the doc "
+            "(or add a git remote, for links to repo files)"
+        )
+        return 1
+    want = render(model, guides)
     sdir = ctx.config.site_dir
     sdir.mkdir(parents=True, exist_ok=True)
     (sdir / ".nojekyll").write_text("")

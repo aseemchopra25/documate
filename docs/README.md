@@ -1,7 +1,7 @@
 <!-- generated documentation — edit the source, not this file -->
 # documate
 
-**17 subsystems · 246/246 symbols documented (100%)**
+**18 subsystems · 266/266 symbols documented (100%)**
 
 **Start here:** [`src/documate/cli.py`](architecture/src.documate.cli.md) — the door into the codebase (nothing else imports it).
 
@@ -20,6 +20,7 @@ flowchart LR
   check --> docs
   check --> drift
   check --> ui
+  cli --> briefs
   cli --> check
   cli --> config
   cli --> core
@@ -28,6 +29,7 @@ flowchart LR
   cli --> site
   cli --> stats
   cli --> ui
+  cli --> undo
   core --> config
   core --> graphdb
   docs --> core
@@ -44,6 +46,7 @@ flowchart LR
   prose --> extract
   prose --> stats
   prose --> ui
+  prose --> undo
   resolve --> core
   site --> core
   site --> docs
@@ -51,6 +54,8 @@ flowchart LR
   stats --> core
   stats --> docs
   stats --> ui
+  undo --> core
+  undo --> ui
 ```
 
 ## Subsystems
@@ -74,9 +79,10 @@ flowchart LR
 | [`src/documate/site.py`](architecture/src.documate.site.md) | site.py — `documate --html`: the same docs, rendered as a static site. |
 | [`src/documate/stats.py`](architecture/src.documate.stats.md) | stats.py — `documate --stats`: the documentation dashboard. |
 | [`src/documate/ui.py`](architecture/src.documate.ui.md) | ui.py — one voice for everything documate says. |
+| [`src/documate/undo.py`](architecture/src.documate.undo.md) | undo.py — the --ai run manifest, and `documate --undo` to revert it. |
 
 ## Hotspots
 
-*Mined from git history as of `f0f401f`.*
+*Mined from git history as of `67d5db3`.*
 
-**Most-changed:** [`src/documate/briefs.py`](architecture/src.documate.briefs.md) (2 commits), [`src/documate/prose.py`](architecture/src.documate.prose.md) (2 commits).
+**Most-changed:** [`src/documate/briefs.py`](architecture/src.documate.briefs.md) (3 commits), [`src/documate/prose.py`](architecture/src.documate.prose.md) (3 commits), [`src/documate/cli.py`](architecture/src.documate.cli.md) (2 commits), [`src/documate/docs.py`](architecture/src.documate.docs.md) (2 commits), [`src/documate/extract.py`](architecture/src.documate.extract.md) (2 commits).

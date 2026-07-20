@@ -8,7 +8,7 @@ resolves the root, loads its config, wires the graph adapter, and hands this Con
 every command. No import-time globals — the same process can point at different roots,
 and nothing is hard-bound to one checkout.
 
-**depends on** [`src/documate/config.py`](src.documate.config.md), [`src/documate/graphdb.py`](src.documate.graphdb.md)  ·  **used by** [`src/documate/anchors.py`](src.documate.anchors.md), [`src/documate/briefs.py`](src.documate.briefs.md), [`src/documate/check.py`](src.documate.check.md), [`src/documate/cli.py`](src.documate.cli.md), [`src/documate/docs.py`](src.documate.docs.md), [`src/documate/drift.py`](src.documate.drift.md), [`src/documate/prose.py`](src.documate.prose.md), [`src/documate/resolve.py`](src.documate.resolve.md), [`src/documate/site.py`](src.documate.site.md), [`src/documate/stats.py`](src.documate.stats.md)
+**depends on** [`src/documate/config.py`](src.documate.config.md), [`src/documate/graphdb.py`](src.documate.graphdb.md)  ·  **used by** [`src/documate/anchors.py`](src.documate.anchors.md), [`src/documate/briefs.py`](src.documate.briefs.md), [`src/documate/check.py`](src.documate.check.md), [`src/documate/cli.py`](src.documate.cli.md), [`src/documate/docs.py`](src.documate.docs.md), [`src/documate/drift.py`](src.documate.drift.md), [`src/documate/prose.py`](src.documate.prose.md), [`src/documate/resolve.py`](src.documate.resolve.md), [`src/documate/site.py`](src.documate.site.md), [`src/documate/stats.py`](src.documate.stats.md), [`src/documate/undo.py`](src.documate.undo.md)
 
 ## API
 

@@ -1,6 +1,6 @@
 # How documate keeps these docs honest
 
-<!-- documents: sym:build_model sig:95937dd4a3e2d746 sym:find_drift sig:03f90c8a71972d8f -->
+<!-- documents: sym:build_model sig:181d888bbcc5d000 sym:find_drift sig:03f90c8a71972d8f -->
 
 Everything under `docs/architecture/` (plus the overview and `ARCHITECTURE.md`, the
 one-page stitch of every subsystem) is **generated**: `documate`

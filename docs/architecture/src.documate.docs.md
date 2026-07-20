@@ -137,8 +137,22 @@ together yet share no import edge — coupling the dependency map can't show.
 
 **called by** `_hotspots`
 
-### `_head_rev(ctx: Context) -> str | None`
+### `_repo_name(ctx: Context) -> str`
 `src/documate/docs.py:237`
+
+The name the generated pages call this repo.
+
+Config `project_name` wins. Otherwise, when the root is a whole checkout, the
+name comes from the git common dir's parent — the main checkout's directory —
+so a linked worktree titles its pages exactly like the checkout that committed
+them and `--check` stays green there (the worktree's own dirname would differ
+on every page). A monorepo sub-tree root keeps its own basename, as does any
+non-git tree.
+
+**called by** `build_model`  ·  **calls** `run`
+
+### `_head_rev(ctx: Context) -> str | None`
+`src/documate/docs.py:265`
 
 Current HEAD's short hash — the pin `documate` mines hotspots at.
 None (no hotspots) without git or before the first commit.
@@ -146,7 +160,7 @@ None (no hotspots) without git or before the first commit.
 **called by** `run`  ·  **calls** `run`
 
 ### `_rev_exists(ctx: Context, rev: str) -> bool`
-`src/documate/docs.py:252`
+`src/documate/docs.py:280`
 
 True when `rev` still resolves to a commit. A hotspot pin orphaned by an
 amend/rebase does not — and a pin the gate can no longer mine at must be
@@ -155,7 +169,7 @@ re-pinned rather than preserved.
 **called by** `run`  ·  **calls** `run`
 
 ### `_hotspots(ctx: Context, rev: str, rels: set[str], edges: list[tuple]) -> Hotspots | None`
-`src/documate/docs.py:265`
+`src/documate/docs.py:293`
 
 Mine churn and co-change from `git log <rev>`, filtered to owned modules.
 
@@ -170,7 +184,7 @@ clears the hot bar.
 **called by** `build_model`  ·  **calls** `Hotspots`, `run`
 
 ### `_go_edges(ctx: Context, syms: list[dict]) -> tuple[list[tuple], list[tuple]]`
-`src/documate/docs.py:329`
+`src/documate/docs.py:357`
 
 (re-qualified call pairs, module edges) recovered from Go's unresolved edges.
 
@@ -199,14 +213,14 @@ still belongs on the dependency map).
 **called by** `build_model`  ·  **calls** `prefixes`, `text`
 
 ### `text(rel: str) -> str`
-`src/documate/docs.py:382`
+`src/documate/docs.py:410`
 
 Source of `rel`, read once, "" when unreadable.
 
 **called by** `_go_edges`, `prefixes`
 
 ### `prefixes(rs: str, d: str) -> set[str]`
-`src/documate/docs.py:395`
+`src/documate/docs.py:423`
 
 Call-site prefixes that can mean package dir `d` inside file `rs`: the
 package's declared name, plus any alias `rs`'s import line gives a path
@@ -215,7 +229,7 @@ ending in the dir (`kk "example.com/mod/krypto"` -> `kk`).
 **called by** `_go_edges`  ·  **calls** `text`
 
 ### `_module_edges(ctx: Context, syms: list[dict]) -> list[tuple]`
-`src/documate/docs.py:446`
+`src/documate/docs.py:474`
 
 (src_module, dst_module, symbol|None) module-dependency edges.
 
@@ -240,7 +254,7 @@ dependency map falls apart (zod dogfood).
 **called by** `build_model`  ·  **calls** `_skip`, `resolve_include`
 
 ### `resolve_include(rs: str, dst: str) -> str | None`
-`src/documate/docs.py:478`
+`src/documate/docs.py:506`
 
 Find include target `dst` from module `rs` the way a compiler would.
 
@@ -255,7 +269,7 @@ System headers own nothing and drop out; a missing edge beats a wrong one.
 **called by** `_module_edges`
 
 ### `class Symbol`
-`src/documate/docs.py:553`
+`src/documate/docs.py:581`
 
 One function/class on a page: identity + prose + owned xrefs.
 
@@ -265,24 +279,24 @@ bare for a top-level symbol — so renderers can group methods under their class
 **called by** `build_model`
 
 #### `Symbol.owner(self) -> str | None`
-`src/documate/docs.py:569`
+`src/documate/docs.py:597`
 
 The class a method belongs to (its dotted prefix); None for top-level symbols.
 
 ### `class Page`
-`src/documate/docs.py:575`
+`src/documate/docs.py:603`
 
 One subsystem (= source module): its API surface, edges, and symbols.
 
 **called by** `build_model`
 
 #### `Page.summary(self) -> str`
-`src/documate/docs.py:594`
+`src/documate/docs.py:622`
 
 First sentence-ish line of the module prose — the overview table cell.
 
 ### `_machine_generated(path: Path) -> bool`
-`src/documate/docs.py:608`
+`src/documate/docs.py:636`
 
 True when the file carries the generated-code banner in its first lines.
 Skip tier, same as skip_dirs: nobody reads the file, so it gets no page,
@@ -292,14 +306,14 @@ probe it per symbol.
 **called by** `build_model`
 
 ### `class Model`
-`src/documate/docs.py:621`
+`src/documate/docs.py:649`
 
 Everything `render` (markdown today, HTML later) needs, no markup in it.
 
 **called by** `build_model`
 
 ### `build_model(ctx: Context, hot_rev: str | None=None) -> Model`
-`src/documate/docs.py:632`
+`src/documate/docs.py:660`
 
 Read the graph + source into the page model. Pure: writes nothing.
 
@@ -310,7 +324,7 @@ the freshness diff never moves just because history grew. None skips mining.
 **called by** `run`  ·  **calls** `Model`, `Page`, `Symbol`, `_doc_mentions`, `_go_edges`, `_hotspots`, `_machine_generated`, `_module_edges`
 
 ### `_tour(pages: list[Page], edges: list[tuple[str, str]]) -> tuple[list[str], list[str]]`
-`src/documate/docs.py:804`
+`src/documate/docs.py:832`
 
 (page rels in reading order, the entry points the tour starts from).
 
@@ -329,14 +343,14 @@ breaks alphabetically, so the tour is deterministic.
 **called by** `_architecture`, `_grouped_overview`, `_overview`  ·  **calls** `reach`
 
 ### `reach(r: str) -> int`
-`src/documate/docs.py:828`
+`src/documate/docs.py:856`
 
 How many modules `r`'s dependency walk opens (itself included).
 
 **called by** `_tour`
 
 ### `_start_here(entries: list[str], href) -> list[str]`
-`src/documate/docs.py:857`
+`src/documate/docs.py:885`
 
 The overview's "start here" line: link the entry points (capped at 3), or
 nothing when the graph has no clear door. `href` maps a rel to its page link.
@@ -344,7 +358,7 @@ nothing when the graph has no clear door. `href` maps a rel to its page link.
 **called by** `_grouped_overview`, `_overview`  ·  **calls** `href`
 
 ### `_about(p: Page) -> str`
-`src/documate/docs.py:871`
+`src/documate/docs.py:899`
 
 A page's one-line description for overview tables: the module prose's first
 line when there is one, else the mined creating-commit subject — italicized and
@@ -353,7 +367,7 @@ labeled as what it is, so evidence never masquerades as documentation.
 **called by** `_group_index`, `_overview`
 
 ### `_mermaid_lines(edges: list[tuple[str, str]]) -> list[str]`
-`src/documate/docs.py:882`
+`src/documate/docs.py:910`
 
 Mermaid edge lines with parse-safe node ids. `(`/`[` open shape syntax in
 a bare mermaid id, so a Next.js route dir (`app/(doc)/[[...slug]]`) silently
@@ -365,14 +379,14 @@ share an id (collisions suffix `_2`) — merging two nodes would draw a lie.
 **called by** `_architecture`, `_grouped_overview`, `_overview`  ·  **calls** `nid`
 
 ### `nid(label: str) -> str`
-`src/documate/docs.py:892`
+`src/documate/docs.py:920`
 
 The parse-safe id for `label`, minted on first sight and stable after.
 
 **called by** `_mermaid_lines`
 
 ### `_stem_edges(edges: list[tuple[str, str]]) -> list[tuple[str, str]]`
-`src/documate/docs.py:913`
+`src/documate/docs.py:941`
 
 Module edges collapsed to file stems for the overview diagram: a .c/.h pair
 is one node there, so its internal edge becomes a self-loop and its outgoing
@@ -381,7 +395,7 @@ edges become duplicates — drop both, the diagram shows modules, not files.
 **called by** `_architecture`, `_overview`
 
 ### `pinned_rev(ddir: Path) -> str | None`
-`src/documate/docs.py:924`
+`src/documate/docs.py:952`
 
 The hotspot pin recorded in the committed overview, if any.
 
@@ -390,7 +404,7 @@ function of the committed tree — new commits don't shift the counts under
 the diff. None when the overview is absent or carries no hotspot section.
 
 ### `_hotspot_lines(hs: Hotspots | None, href) -> list[str]`
-`src/documate/docs.py:938`
+`src/documate/docs.py:966`
 
 The overview's Hotspots section: the most-changed modules, then pairs that
 change together without an import edge between them. Mined evidence, labeled —
@@ -399,14 +413,14 @@ and the label line doubles as the pin `pinned_rev` reads back.
 **called by** `_grouped_overview`, `_overview`  ·  **calls** `href`
 
 ### `_overview(model: Model) -> str`
-`src/documate/docs.py:957`
+`src/documate/docs.py:985`
 
 The docs/README.md: what the system is made of, drawn from the graph.
 
 **called by** `render`  ·  **calls** `_about`, `_hotspot_lines`, `_mermaid_lines`, `_slug`, `_start_here`, `_stem_edges`, `_tour`
 
 ### `_grouped_overview(model: Model, groups: dict[str, list[Page]]) -> str`
-`src/documate/docs.py:983`
+`src/documate/docs.py:1011`
 
 The monorepo overview: directories, not a phone book of modules.
 
@@ -417,7 +431,7 @@ directory level and each row links that directory's own index page — a
 **called by** `render`  ·  **calls** `_dir`, `_hotspot_lines`, `_mermaid_lines`, `_slug`, `_start_here`, `_tail`, `_tour`
 
 ### `_group_index(d: str, pages: list[Page]) -> str`
-`src/documate/docs.py:1032`
+`src/documate/docs.py:1060`
 
 One directory's index page: the same subsystem table the small-repo overview
 has, scoped to this directory's modules.
@@ -425,7 +439,7 @@ has, scoped to this directory's modules.
 **called by** `render`  ·  **calls** `_about`, `_tail`
 
 ### `_page(p: Page, href=None, at: str='docs/architecture') -> str`
-`src/documate/docs.py:1043`
+`src/documate/docs.py:1071`
 
 One architecture page: module prose, edges, flow, then the per-symbol API.
 
@@ -438,7 +452,7 @@ the repo.
 **called by** `render`  ·  **calls** `_slug`, `href`
 
 ### `_architecture(model: Model, groups: dict[str, list[Page]], grouped: bool) -> str`
-`src/documate/docs.py:1112`
+`src/documate/docs.py:1140`
 
 docs/ARCHITECTURE.md — the whole system stitched onto one page.
 
@@ -453,7 +467,7 @@ ordered by their best-ranked page.
 **called by** `render`  ·  **calls** `_dir`, `_mermaid_lines`, `_slug`, `_stem_edges`, `_tail`, `_tour`
 
 ### `render(model: Model) -> dict[str, str]`
-`src/documate/docs.py:1189`
+`src/documate/docs.py:1217`
 
 Model -> {path-under-docs_dir: markdown}. Deterministic: same model, same bytes.
 
@@ -466,14 +480,14 @@ so a monorepo's front page and directory listing stay readable.
 **called by** `run`  ·  **calls** `_architecture`, `_dir`, `_group_index`, `_grouped_overview`, `_overview`, `_page`, `_slug`, `_tail`
 
 ### `href(m: str, _g: str=g) -> str`
-`src/documate/docs.py:1221`
+`src/documate/docs.py:1249`
 
 Link to a sibling module's page from inside this directory's folder.
 
 **called by** `_hotspot_lines`, `_page`, `_start_here`
 
 ### `_print_diff(rel: str, old: str, new: str) -> None`
-`src/documate/docs.py:1234`
+`src/documate/docs.py:1262`
 
 A compact colored unified diff of one regenerated page — what `--watch` shows
 so every doc change is visible the moment it happens, straight in the terminal.
@@ -481,7 +495,7 @@ so every doc change is visible the moment it happens, straight in the terminal.
 **called by** `run`
 
 ### `_agent_pointer(ctx: Context) -> list[str]`
-`src/documate/docs.py:1250`
+`src/documate/docs.py:1278`
 
 Maintain the agent-pointer block in AGENTS.md / CLAUDE.md — whichever already
 exist at the root (never created uninvited).
@@ -495,7 +509,7 @@ place; everything outside the markers is untouched. Returns the files changed.
 **called by** `run`
 
 ### `_rescue_docs_dir(ctx: Context, want: dict[str, str]) -> bool`
-`src/documate/docs.py:1291`
+`src/documate/docs.py:1319`
 
 Interactive way out of the clobber refusal: ask where generated docs
 should go instead, validate the answer (inside the repo, no foreign files
@@ -507,7 +521,7 @@ The caller re-runs so the page model rebuilds with the new docs_rel.
 **called by** `run`
 
 ### `run(ctx: Context, diff: bool=False, quiet: bool=False) -> int`
-`src/documate/docs.py:1344`
+`src/documate/docs.py:1372`
 
 Write the generated tier under docs_dir, pruning orphaned pages of ours.
 
@@ -519,4 +533,4 @@ page is printed as a colored unified diff, so you watch the documentation move
 as you edit the code. With quiet=True (the --ai post-draft refresh) the summary
 line stays unprinted — refusals and failures still speak.
 
-**called by** `_doc_mentions`, `_head_rev`, `_hotspots`, `_origins`, `_rev_exists`  ·  **calls** `_agent_pointer`, `_head_rev`, `_print_diff`, `_rescue_docs_dir`, `_rev_exists`, `build_model`, `render`
+**called by** `_doc_mentions`, `_head_rev`, `_hotspots`, `_origins`, `_repo_name`, `_rev_exists`  ·  **calls** `_agent_pointer`, `_head_rev`, `_print_diff`, `_rescue_docs_dir`, `_rev_exists`, `build_model`, `render`

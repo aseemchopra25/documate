@@ -16,14 +16,17 @@
 Everything else is an override: `documate PATH` (or --root) points the same
 binary at any repo or monorepo sub-tree, --base picks the drift ref, --full
 re-indexes from scratch, --html adds the static site, --briefs emits work
-orders whenever the gate runs. One Context per invocation, no import-time
-globals. `--watch --ai` is refused: a model call on every save is a token
-faucet — run --ai as a deliberate one-shot.
+orders whenever the gate runs. --only/--dry-run/--budget aim, preview, and
+cap an --ai run; --undo reverts the last one from its recorded manifest;
+--list-undocumented prints the missing-docs map as JSON. One Context per
+invocation, no import-time globals. `--watch --ai` is refused: a model call
+on every save is a token faucet — run --ai as a deliberate one-shot.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 import time
@@ -31,7 +34,7 @@ from pathlib import Path
 
 from rich_argparse import RawDescriptionRichHelpFormatter
 
-from . import check, config, docs, prose, site, stats, ui
+from . import briefs, check, config, docs, prose, site, stats, ui, undo
 from .core import Context
 
 
@@ -189,6 +192,40 @@ def build_parser() -> argparse.ArgumentParser:
         "@brief/@param/@return) — the marker Doxygen reads; drafts land uncommitted",
     )
     p.add_argument(
+        "--list-undocumented",
+        action="store_true",
+        help="print every undocumented symbol/module as JSON on stdout (nothing "
+        "else prints there) and exit — the machine-readable ask",
+    )
+    p.add_argument(
+        "--undo",
+        action="store_true",
+        help="revert the last --ai run from its recorded manifest "
+        "(.documate/last-run.json); files edited since are refused, not clobbered",
+    )
+    p.add_argument(
+        "--only",
+        default=None,
+        metavar="GLOB",
+        help="with --ai: draft only work orders whose file matches GLOB "
+        "(repo-relative fnmatch, e.g. 'src/modules/*') — aim a run without "
+        "re-rooting the tool",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="with --ai: show the plan (work orders, calls, token estimate), "
+        "then stop — no model called, no source edited",
+    )
+    p.add_argument(
+        "--budget",
+        type=float,
+        default=None,
+        metavar="USD",
+        help="with --ai: stop starting model calls once the run's measured spend "
+        "reaches USD (in-flight calls finish; the rest is left for a re-run)",
+    )
+    p.add_argument(
         "--html",
         action="store_true",
         help="also render the static HTML site (default: site/, gitignored)",
@@ -245,6 +282,12 @@ def _dispatch(args) -> int:
     docs, site if asked, then either the watch loop or the gate. --watch skips the
     gate on purpose: it's a dev loop, and gating every save would be noise."""
     ctx = Context.make(args.path or args.root)
+    if args.undo:  # reverts files about to be re-read — no point indexing first
+        return undo.undo_last(ctx)
+    if args.list_undocumented:  # machine-readable stdout: index silently, JSON only
+        ctx.graph.index(incremental=not args.full)
+        print(json.dumps(briefs.undocumented(ctx), indent=2))
+        return 0
     _index(ctx, args.full)
     if args.stats:
         return stats.run(ctx)
@@ -259,16 +302,45 @@ def _dispatch(args) -> int:
         )
     if args.check:
         if args.ai:
-            return prose.fix_check(ctx, args.base, args.ai, yes=args.yes)
+            return prose.fix_check(
+                ctx,
+                args.base,
+                args.ai,
+                yes=args.yes,
+                only=args.only,
+                dry=args.dry_run,
+                budget=args.budget,
+            )
         return check.run(ctx, args.base, briefs_dir=bdir)
     if args.ai:
         if args.rewrite:  # re-emit C/C++ docs as Doxygen; no seed/gate chaining
-            return prose.fix_rewrite(ctx, args.ai, yes=args.yes)
+            return prose.fix_rewrite(
+                ctx,
+                args.ai,
+                yes=args.yes,
+                only=args.only,
+                dry=args.dry_run,
+                budget=args.budget,
+            )
         # Seed every missing docstring first; a clean pass hands the gate to
         # fix_check, which repairs any drift findings and returns the re-run
         # gate's verdict. A failed seed stops here — its rc is the honest one.
-        return prose.fix_docs(ctx, args.ai, yes=args.yes) or prose.fix_check(
-            ctx, args.base, args.ai, yes=args.yes, quiet=True
+        return prose.fix_docs(
+            ctx,
+            args.ai,
+            yes=args.yes,
+            only=args.only,
+            dry=args.dry_run,
+            budget=args.budget,
+        ) or prose.fix_check(
+            ctx,
+            args.base,
+            args.ai,
+            yes=args.yes,
+            quiet=True,
+            only=args.only,
+            dry=args.dry_run,
+            budget=args.budget,
         )
     rc = docs.run(ctx)
     if rc == 0 and args.html:
@@ -317,6 +389,16 @@ def main(argv=None) -> int:
                 "--rewrite drives the model over your whole repo — run it as "
                 "`documate --ai <model> --rewrite`, not with --check"
             )
+        if (args.only or args.dry_run or args.budget is not None) and not args.ai:
+            parser.error("--only/--dry-run/--budget steer the model layer — add --ai")
+        if args.undo and (
+            args.check or args.watch or args.ai or args.stats or args.init or args.html
+        ):
+            parser.error("--undo only reverts the last --ai run — drop the other flags")
+        if args.list_undocumented and (
+            args.check or args.watch or args.ai or args.stats or args.init or args.html
+        ):
+            parser.error("--list-undocumented only reads — drop the other mode flags")
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 0
     if not argv and not _repo_here():

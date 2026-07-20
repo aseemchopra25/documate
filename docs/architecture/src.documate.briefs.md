@@ -23,7 +23,7 @@ reads it, feeds each brief to the model, then re-runs `documate --check` — the
 itself is the verification loop. Emission is O(diff): a quiet repo writes an empty
 index and nothing else. Stdlib only.
 
-**depends on** [`src/documate/core.py`](src.documate.core.md), [`src/documate/docs.py`](src.documate.docs.md), [`src/documate/drift.py`](src.documate.drift.md), [`src/documate/extract.py`](src.documate.extract.md), [`src/documate/resolve.py`](src.documate.resolve.md)  ·  **used by** [`src/documate/check.py`](src.documate.check.md), [`src/documate/prose.py`](src.documate.prose.md)  ·  **discussed in** [`notes/v2-direction.md`](../../notes/v2-direction.md)
+**depends on** [`src/documate/core.py`](src.documate.core.md), [`src/documate/docs.py`](src.documate.docs.md), [`src/documate/drift.py`](src.documate.drift.md), [`src/documate/extract.py`](src.documate.extract.md), [`src/documate/resolve.py`](src.documate.resolve.md)  ·  **used by** [`src/documate/check.py`](src.documate.check.md), [`src/documate/cli.py`](src.documate.cli.md), [`src/documate/prose.py`](src.documate.prose.md)  ·  **discussed in** [`notes/v2-direction.md`](../../notes/v2-direction.md)
 
 ```mermaid
 flowchart TD
@@ -131,7 +131,7 @@ summaries it composes over already exist. Cycles break deterministically.
 The subset of symbol rows that carry no docstring/doc-comment, checked
 per file through the same extractor the docs pages read.
 
-**called by** `_undoc_briefs`
+**called by** `_undoc_briefs`, `undocumented`
 
 ### `_undoc_briefs(ctx: Context, base: str, xrefs: tuple, tested: dict, scope: str) -> list[tuple[str, dict]]`
 `src/documate/briefs.py:246`
@@ -144,8 +144,18 @@ graph.
 
 **called by** `emit`  ·  **calls** `_bottom_up`, `_diff`, `_fence`, `_no_doc`, `_span`, `_tail_sections`
 
+### `_block_above(lines: list[str], idx: int) -> tuple[bool, bool, str]`
+`src/documate/briefs.py:320`
+
+(documented, doxygen, text) for the comment block directly above the
+0-indexed decl line: whether one exists, whether it is already a `/** */`
+block carrying `@brief` (the form --rewrite emits — nothing left to do),
+and its raw text (for spotting a `@param` contract).
+
+**called by** `_rewrite_briefs`
+
 ### `_rewrite_briefs(ctx: Context, xrefs: tuple, tested: dict) -> list[tuple[str, dict]]`
-`src/documate/briefs.py:315`
+`src/documate/briefs.py:333`
 
 (text, index row) per C-family Function/Class — the `--rewrite` scope. Every
 C/C++ symbol gets a work order to (re)write its doc comment as Doxygen: the
@@ -154,10 +164,19 @@ there rather than inventing. Rows sort by (file, line) so the inserter, running 
 file's symbols top-to-bottom, keeps its line-shift bookkeeping coherent. Empty
 without a graph or without C sources.
 
-**called by** `emit`  ·  **calls** `_fence`, `_span`, `_tail_sections`
+Idempotent, so runs compose under the per-run cap: a symbol whose doc is already
+a `/** @brief */` block is done and emits nothing — re-running works through the
+remainder instead of redoing (and re-billing) the same first symbols. Two more
+skips keep the .h/.c contract single-sourced: a definition with no doc of its own
+whose sibling-header prototype documents it in Doxygen form emits nothing (Doxygen
+merges decl and def — writing a second block would duplicate the contract), and a
+definition that duplicates a Doxygen-documented prototype's contract gets a
+@brief-only order so the two blocks can't disagree.
+
+**called by** `emit`  ·  **calls** `_block_above`, `_fence`, `_span`, `_tail_sections`
 
 ### `_module_briefs(ctx: Context) -> list[tuple[str, dict]]`
-`src/documate/briefs.py:374`
+`src/documate/briefs.py:430`
 
 (text, index row) per module with no module-level prose — the top-of-file
 doc each architecture-page section leads with. Seeding-scope only: module
@@ -167,8 +186,20 @@ just written the file's docstrings when it summarizes the file.
 
 **called by** `emit`
 
+### `undocumented(ctx: Context) -> list[dict]`
+`src/documate/briefs.py:495`
+
+The machine-readable undocumented map (`--list-undocumented`): one row per
+symbol with no docstring/doc-comment (kind "undocumented") and per module with
+no top-of-file prose (kind "module"), same scope rules as the seeding pass
+(skip_dirs, test markers, machine-generated files skipped). Plain dicts —
+writes nothing, calls no model; the way to just ask what's missing instead of
+reverse-engineering it out of the generated pages.
+
+**calls** `_no_doc`
+
 ### `emit(ctx: Context, base: str, direct: list[dict], out_dir: Path, undocumented: str='changed', rewrite: bool=False) -> list[dict]`
-`src/documate/briefs.py:439`
+`src/documate/briefs.py:534`
 
 Write one work-order file per finding into `out_dir` plus a `briefs.json`
 index (the machine-readable half), clearing briefs from earlier runs first so a

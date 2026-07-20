@@ -116,6 +116,35 @@ def doc_above(lines: list[str], decl_idx: int, hash_ok: bool = False) -> str | N
     return text or None
 
 
+def doc_span(lines: list[str], decl_idx: int) -> tuple[int, int] | None:
+    """(start, end) 0-indexed inclusive of the doc-comment block immediately above
+    `decl_idx` — exactly the lines `doc_above` reads as the doc — or None when
+    nothing documentable sits there. Mirrors doc_above's block detection so a
+    rewrite replaces precisely what the extractor (and the gate) counts as the doc,
+    hopping the same annotation/attribute lines wedged between doc and declaration."""
+    i = decl_idx - 1
+    while i >= 0:
+        s = lines[i].strip()
+        if not s:
+            return None
+        if s.startswith("@") or s.startswith("#["):
+            i -= 1
+            continue
+        break
+    if i < 0:
+        return None
+    end = i
+    if lines[end].strip().endswith("*/"):  # /* ... */ or /** ... */ block
+        while i >= 0 and "/*" not in lines[i]:
+            i -= 1
+        return (i, end) if i >= 0 else None
+    if lines[end].strip().startswith("//"):  # // /// //! line run
+        while i >= 0 and lines[i].strip().startswith("//"):
+            i -= 1
+        return (i + 1, end)
+    return None
+
+
 def signature_at(lines: list[str], idx: int) -> str | None:
     """The full declaration starting at line `idx` (0-indexed), rejoined when it wraps.
 

@@ -25,6 +25,10 @@ The two list keys EXTEND their defaults rather than replace them — adding your
 one vendored tree must not cost you the stock list. Prefix an entry with `!` to
 drop a default (`"!/vendor/"` un-skips vendor/).
     default_base   git ref `check` compares against                ("main")
+    project_name   the name the generated pages carry (default: derived from the
+                   checkout, worktree-safe via the git common dir)
+    format_cmd     command --ai runs over the source files it touched, paths
+                   appended ("clang-format -i"); None skips formatting
 
 Unknown config keys are a hard error — a typo silently doing nothing is the exact rot
 documate exists to stop. Stdlib only.
@@ -73,6 +77,12 @@ _DEFAULTS = {
         "/benchmarks/",
     ],
     "default_base": "main",
+    # None = derive from the checkout (the git common dir's parent, so linked
+    # worktrees title their pages like the main checkout); set to pin the name.
+    "project_name": None,
+    # shell-style command --ai runs over the files it touched (paths appended),
+    # e.g. "clang-format -i" — inserted docs then meet the repo's format gate.
+    "format_cmd": None,
 }
 
 _CONFIG_NAMES = ("documate.config.json", ".documate.config.json")
@@ -88,6 +98,8 @@ class Config:
     skip_dirs: tuple[str, ...]
     test_markers: tuple[str, ...]
     default_base: str
+    project_name: str | None = field(default=None)
+    format_cmd: str | None = field(default=None)
     source: Path | None = field(default=None)
 
 
@@ -153,5 +165,7 @@ def load_config(root: Path) -> Config:
         skip_dirs=tuple(raw["skip_dirs"]),
         test_markers=tuple(raw["test_markers"]),
         default_base=raw["default_base"],
+        project_name=raw["project_name"],
+        format_cmd=raw["format_cmd"],
         source=src,
     )

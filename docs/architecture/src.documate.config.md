@@ -28,6 +28,10 @@ The two list keys EXTEND their defaults rather than replace them — adding your
 one vendored tree must not cost you the stock list. Prefix an entry with `!` to
 drop a default (`"!/vendor/"` un-skips vendor/).
     default_base   git ref `check` compares against                ("main")
+    project_name   the name the generated pages carry (default: derived from the
+                   checkout, worktree-safe via the git common dir)
+    format_cmd     command --ai runs over the source files it touched, paths
+                   appended ("clang-format -i"); None skips formatting
 
 Unknown config keys are a hard error — a typo silently doing nothing is the exact rot
 documate exists to stop. Stdlib only.
@@ -37,21 +41,21 @@ documate exists to stop. Stdlib only.
 ## API
 
 ### `class Config`
-`src/documate/config.py:82`
+`src/documate/config.py:92`
 
 Resolved config. Paths absolute.
 
 **called by** `load_config`
 
 ### `_config_path(root: Path) -> Path | None`
-`src/documate/config.py:94`
+`src/documate/config.py:106`
 
 The config file to honour: $DOCUMATE_CONFIG, else the first repo-root name that exists.
 
 **called by** `load_config`, `scaffold`
 
 ### `scaffold(root: Path) -> Path | None`
-`src/documate/config.py:107`
+`src/documate/config.py:119`
 
 Write a starter `documate.config.json` at the repo root for the user to
 edit, and return its path — or None when a config already exists (never
@@ -62,7 +66,7 @@ lists (an empty list adds nothing — it's the honest "no overrides yet").
 **calls** `_config_path`
 
 ### `load_config(root: Path) -> Config`
-`src/documate/config.py:127`
+`src/documate/config.py:139`
 
 Merge the override file (if any) over the defaults and resolve to a Config.
 

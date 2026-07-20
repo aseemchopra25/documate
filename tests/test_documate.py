@@ -32,6 +32,7 @@ from documate import resolve as R
 from documate import site as SITE
 from documate import stats as ST
 from documate import ui as UI
+from documate import undo as U
 
 
 def _w(p: Path, text: str) -> None:
@@ -180,6 +181,11 @@ class TestConfig(Base):
         (self.dir / "documate.config.json").write_text('{"bogus":1}')
         with self.assertRaises(ValueError):
             Context.make(self.dir)
+
+    def test_project_name_overrides_derived_name(self):
+        (self.dir / "documate.config.json").write_text('{"project_name":"krypton"}')
+        ctx = Context.make(self.dir)
+        self.assertEqual(DOCS._repo_name(ctx), "krypton")
 
 
 class TestAnchors(Base):
@@ -589,6 +595,62 @@ class TestProseFix(Base):
         self.assertIn("gate passed", shown)
         self.assertNotIn("docs fresh", shown)
         self.assertNotIn("drift", shown)
+
+
+class TestBudget(Base):
+    """--budget: no new model call starts once the measured spend (the calls' own
+    cost reports, never a price table) reaches the cap; the remainder is
+    reported and left for a re-run, not marked failed."""
+
+    def test_agentic_path_stops_at_the_cap(self):
+        import contextlib
+        import io
+        import sys
+
+        bdir = self.dir / "briefs"
+        bdir.mkdir()
+        for name in ("b1.md", "b2.md"):
+            (bdir / name).write_text("# work order\n")
+        marker = self.dir / "calls.txt"
+        script = self.dir / "costly_model.py"
+        script.write_text(
+            "import json\n"
+            f"open({str(marker)!r}, 'a').write('x')\n"
+            "print(json.dumps({'total_cost_usd': 2.0, 'result': 'ok'}))\n"
+        )
+        rows = [
+            {
+                "kind": "drift",
+                "file": "src/key.c",
+                "symbol": "verify_key",
+                "brief": "b1.md",
+            },
+            {
+                "kind": "drift",
+                "file": "src/app.c",
+                "symbol": "do_unlock",
+                "brief": "b2.md",
+            },
+        ]
+        spend = P._Spend()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            failures = P._draft(
+                self.ctx,
+                rows,
+                bdir,
+                "fake",
+                30,
+                [sys.executable, str(script)],
+                spend,
+                budget=1.0,
+            )
+        self.assertEqual(failures, 0)
+        self.assertEqual(marker.read_text(), "x")  # exactly one call ran
+        self.assertIn(
+            "--budget $1.00 reached — 1 work order(s) not drafted", buf.getvalue()
+        )
+        self.assertEqual(spend.spent(), 2.0)
 
 
 class TestForeignDb(Base):
@@ -1161,6 +1223,67 @@ class TestSite(RealGraph):
             {"index.html", "architecture.html", "pkg.core.html", "pkg.more.html"},
         )
 
+    def test_guide_links_resolve_at_render_time(self):
+        # sibling .md links become site pages; links out of the docs tree become
+        # blob URLs on the remote at default_base; nothing ships as-written.
+        _git(self.dir, "remote", "add", "origin", "git@github.com:acme/proj.git")
+        _w(
+            self.dir / "docs" / "guides" / "a.md",
+            "# A\n\nSee [B](b.md), the [map](../README.md), "
+            "and [the code](../../pkg/core.py).\n\n"
+            "```md\na fenced [example](untouched.md) stays literal\n```\n",
+        )
+        _w(self.dir / "docs" / "guides" / "b.md", "# B\n\nHello.\n")
+        self.assertEqual(SITE.run(self.ctx), 0)
+        page = (self.ctx.config.site_dir / "guides.a.html").read_text()
+        self.assertIn('href="guides.b.html"', page)
+        self.assertIn('href="index.html"', page)  # the generated overview's page
+        self.assertIn(
+            'href="https://github.com/acme/proj/blob/main/pkg/core.py"', page
+        )
+        self.assertIn("untouched.md", page)  # fenced example left alone
+
+    def test_dead_guide_link_fails_the_build(self):
+        import contextlib
+        import io
+
+        _w(
+            self.dir / "docs" / "guides" / "a.md",
+            "# A\n\nSee [ghost](nothing-there.md).\n",
+        )
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = SITE.run(self.ctx)
+        self.assertEqual(rc, 1)
+        self.assertIn("nothing-there.md", buf.getvalue())
+        self.assertIn("dead link", buf.getvalue())
+        self.assertFalse((self.ctx.config.site_dir / "guides.a.html").exists())
+
+    def test_guide_tables_render_as_tables(self):
+        _w(
+            self.dir / "docs" / "guides" / "t.md",
+            "# T\n\n| flag | effect |\n|---|---|\n| `-x` | stops |\n| `-y` | goes |\n",
+        )
+        self.assertEqual(SITE.run(self.ctx), 0)
+        page = (self.ctx.config.site_dir / "guides.t.html").read_text()
+        self.assertIn("<table>", page)
+        self.assertIn("<th>flag</th>", page)
+        self.assertIn("<td><code>-x</code></td>", page)
+        self.assertNotIn("| flag |", page)  # no raw pipes
+
+    def test_doxygen_docstrings_render_structured(self):
+        html_out = SITE._prose(
+            "@brief Sums two values.\n@param a the left value\n"
+            "@param b the right value\n@return the total"
+        )
+        self.assertIn("<p>Sums two values.</p>", html_out)
+        self.assertIn('<dl class="params">', html_out)
+        self.assertIn("<dt><code>a</code></dt><dd>the left value</dd>", html_out)
+        self.assertIn("<dt>returns</dt><dd>the total</dd>", html_out)
+        self.assertNotIn("@brief", html_out)  # markers never print raw
+        # plain prose keeps the paragraph path
+        self.assertEqual(SITE._prose("Just words."), "<p>Just words.</p>")
+
     def test_getting_started_guide_headlines_the_landing_page(self):
         # a getting-started guide is featured: its opening line becomes the hero lede
         # and its install prose is inlined on index.html, so the front page shows how
@@ -1277,6 +1400,27 @@ class TestUndocumentedBriefs(RealGraph):
         self.assertIn("def sparkle():", text)
         self.assertIn("Return one.", text)  # callee helper's doc, quoted for context
 
+    def test_list_undocumented_is_pure_json_on_stdout(self):
+        import contextlib
+        import io
+
+        _w(
+            self.dir / "pkg" / "core.py",
+            (self.dir / "pkg" / "core.py").read_text()
+            + "\ndef sparkle():\n    return helper()\n",
+        )
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = CLI.main(["--list-undocumented", str(self.dir)])
+        self.assertEqual(rc, 0)
+        rows = json.loads(buf.getvalue())  # stdout parses whole: no chatter mixed in
+        undoc = {(r["kind"], r["file"], r["symbol"]) for r in rows}
+        self.assertIn(("undocumented", "pkg/core.py", "sparkle"), undoc)
+        # setUp's files carry no module prose — the module tier is listed too
+        self.assertIn(("module", "pkg/core.py", "module"), undoc)
+        # documented symbols stay out
+        self.assertNotIn(("undocumented", "pkg/core.py", "helper"), undoc)
+
 
 class TestProseSeed(RealGraph):
     """`docs --fix`: the fresh-repo seeding pass — undocumented Python symbols go
@@ -1313,6 +1457,115 @@ class TestProseSeed(RealGraph):
                 self.ctx, "fake", cmd=[sys.executable, str(script)], yes=True
             )
         return rc, buf.getvalue()
+
+    def test_only_aims_the_run_at_one_file(self):
+        import contextlib
+        import io
+        import sys
+
+        self._sparkle()
+        _w(
+            self.dir / "pkg" / "more.py",
+            (self.dir / "pkg" / "more.py").read_text()
+            + "\ndef plain():\n    return 0\n",
+        )
+        self.ctx.graph.index(incremental=True)
+        script = self.dir / "fake_model.py"
+        script.write_text(
+            "import re, sys\n"
+            "prompt = sys.stdin.read()\n"
+            'for n, _ in re.findall(r"## Work order (\\d+): `([^`]+)`", prompt):\n'
+            '    print(f"<<<doc {n}>>>")\n'
+            '    print("Drafted.")\n'
+            '    print("<<<end>>>")\n'
+        )
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = P.fix_docs(
+                self.ctx,
+                "fake",
+                cmd=[sys.executable, str(script)],
+                yes=True,
+                only="pkg/more*",
+            )
+        self.assertEqual(rc, 0)
+        self.assertIn("keeps 1 of 2 work order(s)", buf.getvalue())
+        self.assertIn('"""Drafted."""', (self.dir / "pkg" / "more.py").read_text())
+        self.assertNotIn("Drafted", (self.dir / "pkg" / "core.py").read_text())
+
+    def test_dry_run_plans_without_calling_the_model(self):
+        import contextlib
+        import io
+        import sys
+
+        self._sparkle()
+        script = self.dir / "boom_model.py"
+        script.write_text("import sys; sys.exit(3)\n")  # any call would fail loudly
+        before = (self.dir / "pkg" / "core.py").read_text()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = P.fix_docs(
+                self.ctx, "fake", cmd=[sys.executable, str(script)], dry=True
+            )
+        self.assertEqual(rc, 0)
+        shown = buf.getvalue()
+        self.assertIn("--ai plan", shown)  # the same plan a real run confirms
+        self.assertIn("--dry-run", shown)
+        self.assertEqual((self.dir / "pkg" / "core.py").read_text(), before)
+        # a glob matching nothing is an explicit clean no-op, not silence
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = P.fix_docs(
+                self.ctx,
+                "fake",
+                cmd=[sys.executable, str(script)],
+                yes=True,
+                only="nowhere/*",
+            )
+        self.assertEqual(rc, 0)
+        self.assertIn("nothing to draft", buf.getvalue())
+
+    def test_format_cmd_runs_over_touched_files(self):
+        import contextlib
+        import io
+        import shlex
+        import sys
+
+        self._sparkle()
+        fmt = self.dir / "fake_fmt.py"
+        fmt.write_text(
+            "import sys\n"
+            "for p in sys.argv[1:]:\n"
+            "    s = open(p).read()\n"
+            "    open(p, 'w').write('# formatted\\n' + s)\n"
+        )
+        (self.dir / "documate.config.json").write_text(
+            json.dumps(
+                {"format_cmd": f"{shlex.quote(sys.executable)} {shlex.quote(str(fmt))}"}
+            )
+        )
+        self.ctx = Context.make(self.dir)
+        script = self.dir / "fake_model.py"
+        script.write_text(
+            "import re, sys\n"
+            "prompt = sys.stdin.read()\n"
+            'for n, _ in re.findall(r"## Work order (\\d+): `([^`]+)`", prompt):\n'
+            '    print(f"<<<doc {n}>>>")\n'
+            '    print("Drafted.")\n'
+            '    print("<<<end>>>")\n'
+        )
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = P.fix_docs(
+                self.ctx, "fake", cmd=[sys.executable, str(script)], yes=True
+            )
+        self.assertEqual(rc, 0)
+        core = (self.dir / "pkg" / "core.py").read_text()
+        self.assertIn('"""Drafted."""', core)  # the draft landed
+        self.assertTrue(core.startswith("# formatted\n"))  # then the formatter ran
+        # untouched files are not formatted
+        self.assertNotIn("# formatted", (self.dir / "pkg" / "more.py").read_text())
+        self.assertIn("format_cmd ran over 1 file(s)", buf.getvalue())
 
     def test_fix_docs_seeds_missing_docstrings(self):
         self._sparkle()
@@ -1690,12 +1943,13 @@ class TestProseRewrite(RealGraph):
         self.assertNotIn("in-place repairs", shown)  # batched, not agentic
 
     def test_rewrite_replaces_existing_block_and_strips_stray_markers(self):
-        # the common real input: an existing multi-line /** */ Doxygen block, and a
-        # model that (against instructions) wraps its reply in /** */ markers
+        # the common real input: an existing multi-line /* */ block (old style, so
+        # the resume filter keeps it as a candidate), and a model that (against
+        # instructions) wraps its reply in /** */ markers
         _w(
             self.dir / "src" / "blk.c",
             "#include <stddef.h>\n\n"
-            "/**\n * @brief old brief\n * @param n count\n */\n"
+            "/*\n * old brief\n * @param n count\n */\n"
             "size_t tally(int n) {\n    return n;\n}\n",
         )
         _git(self.dir, "add", "-A")
@@ -1718,6 +1972,220 @@ class TestProseRewrite(RealGraph):
         rc, shown = self._rewrite()  # setUp built only Python files
         self.assertEqual(rc, 0)
         self.assertIn("no C/C++ symbols", shown)
+
+    def test_rewrite_is_resumable_skips_already_doxygen(self):
+        # a converged symbol emits no work order, so re-running a capped rewrite
+        # continues through the remainder instead of redoing the same first briefs
+        self._crc()
+        rc, _ = self._rewrite()
+        self.assertEqual(rc, 0)
+        out = self.dir / ".documate" / "briefs"
+        index = BR.emit(self.ctx, "HEAD", [], out, rewrite=True)
+        self.assertEqual(index, [])  # everything is /** @brief */ now — nothing left
+
+    def test_rewrite_repairs_wedged_comment(self):
+        # damage from an older insert: a /** */ block wedged between the return
+        # type and the name, where Doxygen and the extractor both stop seeing it.
+        # The rewrite must delete the wedge and land the fresh block above the
+        # whole declaration, replacing the old-style comment sitting up there.
+        _w(
+            self.dir / "src" / "wedge.c",
+            "/* old summary */\n"
+            "static int\n"
+            "/**\n"
+            " * @brief wedged\n"
+            " */\n"
+            "victim(int n)\n"
+            "{\n"
+            "    return n;\n"
+            "}\n",
+        )
+        _git(self.dir, "add", "-A")
+        self.ctx.graph.index(incremental=True)
+        rc, _ = self._rewrite()
+        self.assertEqual(rc, 0)
+        src = (self.dir / "src" / "wedge.c").read_text()
+        self.assertIn(" */\nstatic int\nvictim(int n)", src)  # decl is whole again
+        self.assertNotIn("wedged", src)  # the wedge was deleted, not upgraded
+        self.assertNotIn("old summary", src)  # the top comment was the one replaced
+        self.assertEqual(src.count("/**"), 1)
+
+    def test_rewrite_header_owns_the_contract(self):
+        # a doc-less definition whose sibling-header prototype is Doxygen-documented
+        # emits nothing (Doxygen merges decl/def); a definition duplicating that
+        # contract gets a @brief-only order; an undocumented-header symbol stays a
+        # normal full-contract order.
+        _w(
+            self.dir / "src" / "mod.h",
+            "/**\n * @brief Alpha does things.\n * @param v the input\n"
+            " * @return the result\n */\nint alpha(int v);\n\n"
+            "/**\n * @brief Beta.\n * @param v the input\n */\nint beta(int v);\n",
+        )
+        _w(
+            self.dir / "src" / "mod.c",
+            '#include "mod.h"\n\n'
+            "int alpha(int v)\n{\n    return v;\n}\n\n"
+            "/**\n * @brief Beta local.\n * @param v dup contract\n */\n"
+            "int beta(int v)\n{\n    return v;\n}\n\n"
+            "// old gamma\n"
+            "int gamma(int v)\n{\n    return v;\n}\n",
+        )
+        _git(self.dir, "add", "-A")
+        self.ctx.graph.index(incremental=True)
+        out = self.dir / ".documate" / "briefs"
+        index = BR.emit(self.ctx, "HEAD", [], out, rewrite=True)
+        syms = {r["symbol"] for r in index}
+        self.assertNotIn("alpha", syms)  # the prototype already carries the contract
+        self.assertIn("beta", syms)
+        self.assertIn("gamma", syms)
+        beta = next(r for r in index if r["symbol"] == "beta")
+        self.assertIn("## Contract", (out / beta["brief"]).read_text())
+        gamma = next(r for r in index if r["symbol"] == "gamma")
+        self.assertNotIn("## Contract", (out / gamma["brief"]).read_text())
+
+
+class TestUndo(RealGraph):
+    """--ai runs leave a manifest (mode, model, writes, before-images) so the run
+    is attributable and reversible without in-file markers; `documate --undo`
+    restores exactly the recorded files, refusing any edited since."""
+
+    def _seed(self):
+        """Two undocumented symbols in two files, drafted by a scripted model."""
+        import contextlib
+        import io
+        import sys
+
+        _w(
+            self.dir / "pkg" / "core.py",
+            (self.dir / "pkg" / "core.py").read_text()
+            + "\ndef sparkle():\n    return helper()\n",
+        )
+        _w(
+            self.dir / "pkg" / "more.py",
+            (self.dir / "pkg" / "more.py").read_text()
+            + "\ndef plain():\n    return 0\n",
+        )
+        self.ctx.graph.index(incremental=True)
+        script = self.dir / "fake_model.py"
+        script.write_text(
+            "import re, sys\n"
+            "prompt = sys.stdin.read()\n"
+            'for n, _ in re.findall(r"## Work order (\\d+): `([^`]+)`", prompt):\n'
+            '    print(f"<<<doc {n}>>>")\n'
+            '    print("Drafted.")\n'
+            '    print("<<<end>>>")\n'
+        )
+        self.originals = {
+            rel: (self.dir / rel).read_text() for rel in ("pkg/core.py", "pkg/more.py")
+        }
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = P.fix_docs(
+                self.ctx, "fake", cmd=[sys.executable, str(script)], yes=True
+            )
+        self.assertEqual(rc, 0)
+        return buf.getvalue()
+
+    def test_run_writes_a_manifest(self):
+        shown = self._seed()
+        self.assertIn("documate --undo", shown)  # the run says how to revert
+        data = json.loads((self.dir / ".documate" / "last-run.json").read_text())
+        self.assertEqual(data["mode"], "seed")
+        self.assertEqual(data["model"], "fake")
+        self.assertEqual(set(data["files"]), {"pkg/core.py", "pkg/more.py"})
+        wrote = {(w["file"], w["symbol"]) for w in data["writes"]}
+        self.assertIn(("pkg/core.py", "sparkle"), wrote)
+        self.assertIn(("pkg/more.py", "plain"), wrote)
+        # before-images are the true pre-run text
+        self.assertEqual(
+            data["files"]["pkg/core.py"]["before"], self.originals["pkg/core.py"]
+        )
+
+    def test_undo_restores_pre_run_state(self):
+        import contextlib
+        import io
+
+        self._seed()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = U.undo_last(self.ctx)
+        self.assertEqual(rc, 0)
+        for rel, text in self.originals.items():
+            self.assertEqual((self.dir / rel).read_text(), text)
+        self.assertFalse((self.dir / ".documate" / "last-run.json").exists())
+        # a second --undo has nothing left and says so
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            self.assertEqual(U.undo_last(self.ctx), 1)
+
+    def test_undo_refuses_files_edited_after_the_run(self):
+        import contextlib
+        import io
+
+        self._seed()
+        edited = (self.dir / "pkg" / "more.py").read_text() + "\n# hand edit\n"
+        (self.dir / "pkg" / "more.py").write_text(edited)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = U.undo_last(self.ctx)
+        self.assertEqual(rc, 1)  # something was refused
+        # the untouched file was restored, the edited one left exactly as edited
+        self.assertEqual(
+            (self.dir / "pkg" / "core.py").read_text(), self.originals["pkg/core.py"]
+        )
+        self.assertEqual((self.dir / "pkg" / "more.py").read_text(), edited)
+        # the refused file keeps its manifest entry for a later --undo
+        data = json.loads((self.dir / ".documate" / "last-run.json").read_text())
+        self.assertEqual(set(data["files"]), {"pkg/more.py"})
+
+
+class TestCReferenceNodes(RealGraph):
+    """A C type *reference* (`struct x *p` in a signature, a local, an external
+    libc type) must not become a Class node — only the definition, the specifier
+    carrying a body, is a documentable symbol. References were counting a type as
+    undocumented in every file that used it, making full coverage unreachable."""
+
+    def test_only_definitions_become_class_nodes(self):
+        _w(
+            self.dir / "src" / "a.h",
+            "/**\n * @brief A 2D point.\n */\nstruct point {\n    int x;\n};\n",
+        )
+        _w(
+            self.dir / "src" / "b.c",
+            '#include "a.h"\n#include <time.h>\n\nstruct point g;\n\n'
+            "int use_point(struct point *p)\n{\n"
+            "    struct timespec ts;\n    (void)ts;\n    return p->x;\n}\n",
+        )
+        _git(self.dir, "add", "-A")
+        self.ctx.graph.index(incremental=True)
+        classes = [s for s in self.ctx.graph.symbols() if s["kind"] == "Class"]
+        where = {(s["name"], self.ctx.rel(s["file"])) for s in classes}
+        self.assertIn(("point", "src/a.h"), where)  # the definition, once
+        self.assertNotIn(("point", "src/b.c"), where)  # the uses
+        self.assertNotIn("timespec", {s["name"] for s in classes})  # not ours
+        # the documented definition is what coverage counts
+        model = DOCS.build_model(self.ctx)
+        page = next(p for p in model.pages if p.rel == "src/a.h")
+        self.assertTrue(any(s.name == "point" and s.doc for s in page.symbols))
+
+
+class TestWorktree(RealGraph):
+    """A linked worktree must generate byte-identical pages to the main checkout —
+    the page title comes from the common git dir's parent, not the worktree's own
+    dirname — so `--check` (freshness) passes there instead of forcing a skip."""
+
+    def test_check_passes_in_a_linked_worktree(self):
+        self.assertEqual(DOCS.run(self.ctx), 0)
+        _git(self.dir, "add", "-A")
+        _git(self.dir, "commit", "-q", "-m", "docs")
+        wt = self.dir.parent / (self.dir.name + "_wt")
+        _git(self.dir, "worktree", "add", "--detach", str(wt))
+        self.addCleanup(__import__("shutil").rmtree, wt, True)
+        ctx2 = Context.make(wt)
+        ctx2.graph.index()
+        model = DOCS.build_model(ctx2)
+        self.assertEqual(model.root_name, self.dir.name)  # not the worktree's name
+        self.assertEqual(CK.run(ctx2, "HEAD"), 0)
 
 
 class TestMultiLanguage(unittest.TestCase):
@@ -2979,14 +3447,14 @@ class TestBareInvocation(RealGraph):
             mock.patch.object(
                 CLI.prose,
                 "fix_docs",
-                side_effect=lambda ctx, m, yes=False: (
+                side_effect=lambda ctx, m, yes=False, **kw: (
                     calls.append(("seed", m, yes)) or 0
                 ),
             ),
             mock.patch.object(
                 CLI.prose,
                 "fix_check",
-                side_effect=lambda ctx, b, m, yes=False, quiet=False: (
+                side_effect=lambda ctx, b, m, yes=False, quiet=False, **kw: (
                     calls.append(("repair", m, yes, quiet)) or 0
                 ),
             ),
