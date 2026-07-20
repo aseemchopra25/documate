@@ -161,6 +161,12 @@ _TYPE_KEYWORDS = "class|struct|enum|actor|protocol|interface|trait|type"
 #: suffixes whose doc comments are `#` runs — elsewhere `#` is a directive (#include)
 _HASH_DOCS = (".sh", ".bash", ".zsh")
 
+#: C-family suffixes. Their doc tool is Doxygen, which reads `/** */` blocks and
+#: ignores plain `//` lines, so anything written into these files has to be a
+#: block — see `prose._doxygen_block`. Shared with `briefs`, which scopes
+#: `--rewrite` by the same list.
+CFAMILY = (".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh", ".m", ".mm")
+
 
 def _sibling_header(path: Path) -> list[str]:
     """Lines of the header next to a C/C++/ObjC implementation file, [] when none.

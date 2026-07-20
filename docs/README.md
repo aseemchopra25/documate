@@ -1,7 +1,7 @@
 <!-- generated documentation — edit the source, not this file -->
 # documate
 
-**17 subsystems · 244/244 symbols documented (100%)**
+**17 subsystems · 246/246 symbols documented (100%)**
 
 **Start here:** [`src/documate/cli.py`](architecture/src.documate.cli.md) — the door into the codebase (nothing else imports it).
 
@@ -74,3 +74,9 @@ flowchart LR
 | [`src/documate/site.py`](architecture/src.documate.site.md) | site.py — `documate --html`: the same docs, rendered as a static site. |
 | [`src/documate/stats.py`](architecture/src.documate.stats.md) | stats.py — `documate --stats`: the documentation dashboard. |
 | [`src/documate/ui.py`](architecture/src.documate.ui.md) | ui.py — one voice for everything documate says. |
+
+## Hotspots
+
+*Mined from git history as of `f0f401f`.*
+
+**Most-changed:** [`src/documate/briefs.py`](architecture/src.documate.briefs.md) (2 commits), [`src/documate/prose.py`](architecture/src.documate.prose.md) (2 commits).

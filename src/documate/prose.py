@@ -373,6 +373,84 @@ def _doxygen_block(text: str, ind: str) -> str | None:
     return block
 
 
+#: how far above the name line a declaration's type/qualifier prefix may run
+_DECL_PREFIX_MAX = 4
+
+#: a line that is nothing but type/qualifier words and pointer stars, e.g.
+#: `static enum aliro_uwb_err`, `struct cherry_session *`, `CHIP_ERROR`, `*`.
+#: Anything carrying punctuation that opens or ends a statement is excluded, so
+#: the walk can never cross `;`, `{`, `}`, `(`, `=`, a comment or a directive.
+_DECL_PREFIX = re.compile(r"^[A-Za-z_][A-Za-z0-9_ \t*]*$|^\*+$")
+
+#: opens a member scope rather than a function body — documenting inside one of
+#: these is legitimate, documenting inside a function body is not.
+_MEMBER_SCOPE = re.compile(r"\b(struct|class|enum|union|namespace|extern)\b")
+
+
+def _decl_start(lines: list[str], i: int) -> int:
+    """Index of the first line of the declaration whose name sits on line `i`.
+
+    C and C++ routinely break a declaration after the return type, which is the
+    house style across the Linux kernel and Zephyr:
+
+        static enum aliro_uwb_err
+        parse_session_attribute(struct aliro_uwb_msg_attribute *attr, ...)
+
+    The graph records the symbol at its name, so inserting above that line puts
+    the comment *inside* the declaration, where Doxygen and `extract.doc_above`
+    both stop seeing it — the symbol reads as undocumented however many times it
+    is written. Walk up over bare type/qualifier/`*` lines to the real start."""
+    j = i
+    for _ in range(_DECL_PREFIX_MAX):
+        if j == 0:
+            break
+        s = lines[j - 1].strip()
+        if not s or not _DECL_PREFIX.match(s):
+            break
+        j -= 1
+    return j
+
+
+def _at_definition(lines: list[str], i: int) -> bool:
+    """True when line `i` is at a scope where a definition can live: not inside a
+    parameter list, and not inside a function body.
+
+    The landing line is found by matching the symbol's name, which also matches
+    the name's *uses* — a parameter of that type, a local of that type. Writing
+    there wedges a doc comment into a signature (which corrupts how the
+    declaration renders) or onto a local variable (which documents nothing).
+    Member scopes are allowed through: a struct or class body is where a member's
+    doc belongs. A `{` straight after `)` opens a function body even when the
+    signature names a struct return type (`static struct s *get(void) {`).
+    Delimiters inside strings, chars and comments do not count."""
+    paren = 0
+    scopes: list[bool] = []  # per open brace: True when it opened a member scope
+    in_block = False
+    last = ""  # last non-space code char before the brace being classified
+    for ln in lines[:i]:
+        if in_block:
+            if "*/" not in ln:
+                continue
+            ln = ln.split("*/", 1)[1]
+            in_block = False
+        s = re.sub(r'"(\\.|[^"\\])*"', '""', ln)
+        s = re.sub(r"'(\\.|[^'\\])*'", "''", s)
+        s = re.sub(r"/\*.*?\*/", "", s)
+        if "/*" in s:
+            s, in_block = s.split("/*", 1)[0], True
+        s = re.sub(r"//.*", "", s)
+        member = bool(_MEMBER_SCOPE.search(s))
+        paren += s.count("(") - s.count(")")
+        for ch in s:
+            if ch == "{":
+                scopes.append(member and last != ")")
+            elif ch == "}" and scopes:
+                scopes.pop()
+            if not ch.isspace():
+                last = ch
+    return paren <= 0 and all(scopes)
+
+
 def _doc_span(lines: list[str], decl_idx: int) -> tuple[int, int] | None:
     """(start, end) 0-indexed inclusive of the doc-comment block immediately above
     `decl_idx` — exactly the lines `extract.doc_above` reads as the doc — or None
@@ -431,6 +509,10 @@ def _rewrite_above(ctx: Context, row: dict, text: str, shifts: dict) -> str | No
     )
     if i is None:
         return "definition not found"
+    # no suffix gate: rewrite briefs are already C-family only (scoped in briefs)
+    if not _at_definition(lines, i):
+        return "landing line is not a definition"
+    i = _decl_start(lines, i)
     block = _doxygen_block(text, re.match(r"\s*", lines[i]).group(0))
     if block is None:
         return "empty draft"
@@ -480,7 +562,18 @@ def _insert_module(
         if extract.module_doc(path, at if isinstance(at, int) else None):
             return "already documented"
         i = 1 if lines and lines[0].startswith("#!") else 0
-        lines.insert(i, _comment(text, "", prefix))
+        # Doxygen only reads a file's lead prose out of a `/** */` block, and only
+        # credits it to the file when it carries `@file`; a `//` run at the top of
+        # a .c is invisible to it.
+        if row["file"].endswith(extract.CFAMILY):
+            # the name stays alone on its line: `\file` takes a single word, and
+            # anything glued to it would change the file Doxygen credits.
+            block = _doxygen_block(f"@file {Path(row['file']).name}\n{text}", "")
+            if block is None:
+                return "empty draft"
+        else:
+            block = _comment(text, "", prefix)
+        lines.insert(i, block)
     else:
         if '"""' in text:
             return "draft contains a docstring delimiter"
@@ -554,9 +647,19 @@ def _insert_above(ctx: Context, row: dict, text: str, shifts: dict) -> str | Non
     )
     if i is None:
         return "definition not found"
+    cfamily = row["file"].endswith(extract.CFAMILY)
+    if cfamily:
+        if not _at_definition(lines, i):
+            return "landing line is not a definition"
+        i = _decl_start(lines, i)
     if extract.doc_above(lines, i, hash_ok=prefix == "#"):
         return "already documented"
-    block = _comment(text, re.match(r"\s*", lines[i]).group(0), prefix)
+    ind = re.match(r"\s*", lines[i]).group(0)
+    # Doxygen reads `/** */`, never a `//` run: a line comment here would leave
+    # the symbol undocumented in the very tool the language documents with.
+    block = _doxygen_block(text, ind) if cfamily else _comment(text, ind, prefix)
+    if block is None:
+        return "empty draft"
     lines.insert(i, block)
     path.write_text("".join(lines), encoding="utf-8")
     shifts.setdefault(row["file"], []).append((at, block.count("\n")))

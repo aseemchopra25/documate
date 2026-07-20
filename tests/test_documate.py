@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from documate.core import GENERATED_STAMP, Context
 from documate import anchors as A
@@ -1448,9 +1449,13 @@ class TestProseSeed(RealGraph):
         )
         self.assertEqual(rc, 0)
         src = (self.dir / "src" / "util.c").read_text()
-        self.assertRegex(src, r"// Drafted \d+\.\nint alpha")
-        self.assertRegex(src, r"// Drafted \d+\.\nint beta")
-        self.assertTrue(src.startswith("// Drafted"), src[:40])
+        # C is documented with Doxygen blocks, never `//` runs: Doxygen ignores
+        # line comments, so a `//` draft leaves the symbol undocumented in the one
+        # tool the language documents with.
+        self.assertRegex(src, r"/\*\*\n \* Drafted \d+\.\n \*/\nint alpha")
+        self.assertRegex(src, r"/\*\*\n \* Drafted \d+\.\n \*/\nint beta")
+        self.assertTrue(src.startswith("/**\n * @file util.c\n * Drafted"), src[:60])
+        self.assertNotIn("// Drafted", src)
         self.assertNotIn("in-place repairs", shown)  # batched, not agentic
         self.assertNotIn("failed", shown)
         out = self.dir / ".documate" / "briefs"
@@ -3147,6 +3152,110 @@ class TestStats(Base):
         self.assertEqual(DOCS.run(self.ctx), 0)
         led = self.dir / ".documate" / "stats.jsonl"
         self.assertEqual(len(led.read_text().splitlines()), 1)
+
+
+class CFamilyInsertTest(unittest.TestCase):
+    """Doc comments written into C/C++ must be Doxygen blocks, must sit above the
+    whole declaration, and must never land on a use of the symbol's name."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="documate_cfam_")).resolve()
+        self.ctx = SimpleNamespace(root=self.dir)
+
+    def _write(self, name: str, src: str) -> Path:
+        path = self.dir / name
+        path.write_text(src, encoding="utf-8")
+        return path
+
+    def _insert(self, name: str, src: str, symbol: str, line: int, text="Does a thing."):
+        path = self._write(name, src)
+        row = {"kind": "undocumented", "symbol": symbol, "file": name, "line": line}
+        err = P._insert_above(self.ctx, row, text, {})
+        return err, path.read_text(encoding="utf-8")
+
+    def test_c_gets_a_doxygen_block_not_a_line_comment(self):
+        err, out = self._insert("a.c", "int add(int x)\n{\n\treturn x;\n}\n", "add", 1)
+        self.assertIsNone(err)
+        self.assertIn("/**", out)
+        self.assertNotIn("// Does a thing.", out)
+
+    def test_return_type_on_its_own_line_keeps_the_declaration_intact(self):
+        # Linux/Zephyr house style: the graph records the symbol at its name, which
+        # is the second line. Inserting there would split the declaration.
+        src = "static enum err\nparse_attr(struct attr *a)\n{\n\treturn 0;\n}\n"
+        err, out = self._insert("b.c", src, "parse_attr", 2)
+        self.assertIsNone(err)
+        self.assertTrue(
+            out.startswith("/**"), f"comment must precede the return type:\n{out}"
+        )
+        self.assertNotIn("static enum err\n/**", out)
+
+    def test_pointer_return_with_a_lone_star_line(self):
+        src = "struct msg\n\t*\n\tbuild_m3(struct session *s)\n{\n\treturn 0;\n}\n"
+        err, out = self._insert("c.c", src, "build_m3", 3)
+        self.assertIsNone(err)
+        self.assertTrue(out.startswith("/**"), out)
+
+    def test_cpp_qualified_method_definition(self):
+        src = "CHIP_ERROR\nReader::GetSubId(MutableByteSpan &out)\n{\n\treturn 0;\n}\n"
+        err, out = self._insert("d.cpp", src, "GetSubId", 2)
+        self.assertIsNone(err)
+        self.assertTrue(out.startswith("/**"), out)
+
+    def test_refuses_to_write_inside_a_parameter_list(self):
+        # `attr` also names a type used as a parameter; the name search can land there.
+        src = "int parse(const char *name,\n\t  struct attr *attr)\n{\n\treturn 0;\n}\n"
+        err, out = self._insert("e.c", src, "attr", 2)
+        self.assertEqual(err, "landing line is not a definition")
+        self.assertNotIn("/**", out)
+
+    def test_refuses_to_write_onto_a_local_variable(self):
+        src = "void run(void)\n{\n\tstruct caps *caps = get();\n\t(void)caps;\n}\n"
+        err, out = self._insert("f.c", src, "caps", 3)
+        self.assertEqual(err, "landing line is not a definition")
+        self.assertNotIn("/**", out)
+
+    def test_brace_on_the_signature_line_is_still_a_function_body(self):
+        # The body brace shares its line with `struct` (the return type): that
+        # must read as a function body, not a member scope.
+        src = (
+            "static struct caps *get(void) {\n"
+            "\tstruct caps *caps = init();\n"
+            "\treturn caps;\n}\n"
+        )
+        err, out = self._insert("k.c", src, "caps", 2)
+        self.assertEqual(err, "landing line is not a definition")
+        self.assertNotIn("/**", out)
+
+    def test_struct_member_is_still_documentable(self):
+        src = "struct cfg {\n\tint slot_bitmask;\n};\n"
+        err, out = self._insert("g.c", src, "slot_bitmask", 2)
+        self.assertIsNone(err)
+        self.assertIn("/**", out)
+
+    def test_already_documented_is_left_alone(self):
+        src = "/** Adds. */\nstatic int\nadd(int x)\n{\n\treturn x;\n}\n"
+        err, out = self._insert("h.c", src, "add", 3)
+        self.assertEqual(err, "already documented")
+        self.assertEqual(out.count("/**"), 1)
+
+    def test_non_c_languages_keep_line_comments(self):
+        err, out = self._insert("i.rs", "fn add(x: i32) -> i32 { x }\n", "add", 1)
+        self.assertIsNone(err)
+        self.assertIn("// Does a thing.", out)
+        self.assertNotIn("/**", out)
+
+    def test_rewrite_replaces_above_the_whole_declaration(self):
+        src = "// old\nstatic enum err\nparse_attr(struct attr *a)\n{\n\treturn 0;\n}\n"
+        path = self._write("j.c", src)
+        row = {"kind": "rewrite", "symbol": "parse_attr", "file": "j.c", "line": 3}
+        err = P._rewrite_above(self.ctx, row, "@brief Parses.", {})
+        out = path.read_text(encoding="utf-8")
+        self.assertIsNone(err)
+        self.assertNotIn("// old", out)
+        self.assertTrue(out.startswith("/**"), out)
+        self.assertIn("static enum err\nparse_attr", out)
+
 
 
 if __name__ == "__main__":

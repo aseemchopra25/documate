@@ -35,9 +35,10 @@ _SRC_CAP = 400  # lines of symbol source in a brief — a work order, not a repo
 _DIFF_CAP = 200  # lines of diff context
 _XREF_CAP = 8  # callers/callees quoted per brief, matching the docs pages
 
-#: C-family suffixes the --rewrite scope targets: their doc tool is Doxygen, which
-#: ignores plain `//` — the rewrite re-emits every one as a `/** */` block.
-_CFAMILY = (".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh", ".m", ".mm")
+#: C-family suffixes the --rewrite scope targets. Defined in `extract` because the
+#: default insert path needs the same list: Doxygen ignores plain `//`, so every
+#: write into these files is a `/** */` block, rewrite or not.
+_CFAMILY = extract.CFAMILY
 
 
 def _slug(text: str) -> str:
