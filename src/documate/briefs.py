@@ -267,6 +267,7 @@ def _undoc_briefs(
     ]
     undocumented = _no_doc(ctx, cand)
     out: list[tuple[str, dict]] = []
+    lines_of: dict[str, list[str]] = {}
     for s in _bottom_up(undocumented, xrefs[1]):
         rel = ctx.rel(s["file"])
         node = next(
@@ -278,6 +279,18 @@ def _undoc_briefs(
             None,
         )
         line, line_end = (node[2], node[3]) if node else (s["line"], None)
+        if Path(rel).suffix in _CFAMILY:
+            if s["file"] not in lines_of:
+                try:
+                    lines_of[s["file"]] = (
+                        Path(s["file"])
+                        .read_text(encoding="utf-8", errors="ignore")
+                        .splitlines()
+                    )
+                except OSError:
+                    lines_of[s["file"]] = []
+            if not _definition_site(lines_of[s["file"]], s["name"], line):
+                continue  # a use site, not the definition — the inserter would refuse
         why = (
             "is undocumented"
             if scope == "all"
@@ -330,6 +343,18 @@ def _block_above(lines: list[str], idx: int) -> tuple[bool, bool, str]:
     return True, lines[start].lstrip().startswith("/**") and "@brief" in text, text
 
 
+def _definition_site(lines: list[str], name: str, line) -> bool:
+    """True when the recorded line lands at a scope the inserter can write to —
+    the same `_find_decl`/`_at_definition` probe prose runs at insert time, run
+    at emission so a reference-site node (a C file that only *uses* a type
+    defined elsewhere) never becomes a work order that is drafted, billed, then
+    refused. The insert-time guard stays as the backstop."""
+    from . import prose  # function-level: prose imports briefs at module level
+
+    i = prose._find_decl(lines, line or 1, re.compile(rf"\b{re.escape(name)}\b"))
+    return i is not None and prose._at_definition(lines, i)
+
+
 def _rewrite_briefs(ctx: Context, xrefs: tuple, tested: dict) -> list[tuple[str, dict]]:
     """(text, index row) per C-family Function/Class — the `--rewrite` scope. Every
     C/C++ symbol gets a work order to (re)write its doc comment as Doxygen: the
@@ -375,6 +400,8 @@ def _rewrite_briefs(ctx: Context, xrefs: tuple, tested: dict) -> list[tuple[str,
                 )
             except OSError:
                 lines_of[s["file"]] = []
+        if not _definition_site(lines_of[s["file"]], s["name"], line):
+            continue  # a use site, not the definition — the inserter would refuse
         own, own_dox, own_text = _block_above(lines_of[s["file"]], (line or 1) - 1)
         header_dox = False
         if s["kind"] == "Function" and Path(s["file"]).suffix in _IMPLS:

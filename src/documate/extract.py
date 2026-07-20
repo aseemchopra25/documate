@@ -221,12 +221,18 @@ def _decl_line(lines: list[str], name: str, kind: str, avoid: int = -1) -> int |
     The doc a reader wrote isn't always above the node the graph kept: C documents
     the header prototype, not the definition, and Swift's `extension Foo` can shadow
     `class Foo` (one node per qualified name). Functions match `name(`, types match a
-    type keyword + name; comment lines never match (prose mentioning the name isn't a
-    declaration), and `avoid` excludes the node's own line."""
+    type keyword + name *at a declaration* — followed by a body/inheritance/end, never
+    by a declarator (`struct s *fn(...)`, `struct s var;` are uses of the type, and a
+    documented use would hand the type that function's signature and doc). Comment
+    lines never match (prose mentioning the name isn't a declaration), and `avoid`
+    excludes the node's own line."""
     if kind == "Function":
         pat = re.compile(rf"\b{re.escape(name)}\s*\(")
     else:
-        pat = re.compile(rf"\b(?:{_TYPE_KEYWORDS})\s+{re.escape(name)}\b")
+        pat = re.compile(
+            rf"\b(?:{_TYPE_KEYWORDS})\s+{re.escape(name)}\b"
+            rf"(?=\(|\s*(?:$|[{{:;<=])|\s+(?:{_TYPE_KEYWORDS}|final)\b)"
+        )
     for i, line in enumerate(lines):
         s = line.strip()
         if i == avoid or s.startswith(("//", "/*", "*")):

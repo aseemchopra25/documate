@@ -106,13 +106,16 @@ The line index of another *documented* declaration of `name`, or None.
 The doc a reader wrote isn't always above the node the graph kept: C documents
 the header prototype, not the definition, and Swift's `extension Foo` can shadow
 `class Foo` (one node per qualified name). Functions match `name(`, types match a
-type keyword + name; comment lines never match (prose mentioning the name isn't a
-declaration), and `avoid` excludes the node's own line.
+type keyword + name *at a declaration* — followed by a body/inheritance/end, never
+by a declarator (`struct s *fn(...)`, `struct s var;` are uses of the type, and a
+documented use would hand the type that function's signature and doc). Comment
+lines never match (prose mentioning the name isn't a declaration), and `avoid`
+excludes the node's own line.
 
 **called by** `comment_symbols`  ·  **calls** `doc_above`
 
 ### `comment_symbols(path: Path, syms: list) -> dict`
-`src/documate/extract.py:239`
+`src/documate/extract.py:245`
 
 {dotted name: (signature, doc|None)} for a non-Python file: the graph gives each
 symbol's line, source gives the declaration (`signature_at`) and the comment above
@@ -129,7 +132,7 @@ checked via `_decl_line` before giving up.
 **called by** `extract`  ·  **calls** `_decl_line`, `_sibling_header`, `doc_above`, `short`, `signature_at`
 
 ### `extract(path: Path, syms: list) -> dict`
-`src/documate/extract.py:281`
+`src/documate/extract.py:287`
 
 Per-language doc extraction: Python through stdlib `ast`, everything else through the
 comment-above-declaration harvester. The one place that knows a file's language.
@@ -137,7 +140,7 @@ comment-above-declaration harvester. The one place that knows a file's language.
 **calls** `comment_symbols`, `py_symbols`
 
 ### `module_doc(path: Path, first_line: int | None=None) -> str | None`
-`src/documate/extract.py:295`
+`src/documate/extract.py:301`
 
 The module-level prose of a file: Python's module docstring; any other language's
 comment block at the top of the file (Go's `// Package x ...`, a doxygen `@file`

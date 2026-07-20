@@ -1001,6 +1001,20 @@ def incremental_update(
             "dependent_files": [],
         }
 
+    # Purge stale data from files no longer collected — `git diff --name-only`
+    # reports only a rename's *new* path (rename detection hides the old one),
+    # so moved files would otherwise leave their nodes behind until a --full.
+    existing_files = set(store.get_all_files())
+    current_abs = {
+        str(repo_root / f) for f in collect_all_files(repo_root, None, extra_ignore)
+    }
+    stale_files = existing_files - current_abs
+    for stale in stale_files:
+        store.remove_file_data(stale)
+    # Persist before store_file_nodes_edges() opens its own BEGIN IMMEDIATE.
+    if stale_files:
+        store.commit()
+
     # Find dependent files (files that import from changed files)
     dependent_files: set[str] = set()
     for rel_path in changed_files:

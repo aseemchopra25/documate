@@ -33,7 +33,7 @@ layer can never trigger on its own output. The model dependency stays behind
 the subprocess boundary; output goes through `ui` (a live progress bar on a
 terminal, a plain transcript in CI).
 
-**depends on** [`src/documate/briefs.py`](src.documate.briefs.md), [`src/documate/check.py`](src.documate.check.md), [`src/documate/core.py`](src.documate.core.md), [`src/documate/docs.py`](src.documate.docs.md), [`src/documate/extract.py`](src.documate.extract.md), [`src/documate/stats.py`](src.documate.stats.md), [`src/documate/ui.py`](src.documate.ui.md), [`src/documate/undo.py`](src.documate.undo.md)  ·  **used by** [`src/documate/cli.py`](src.documate.cli.md)  ·  **discussed in** [`notes/v2-direction.md`](../../notes/v2-direction.md)
+**depends on** [`src/documate/briefs.py`](src.documate.briefs.md), [`src/documate/check.py`](src.documate.check.md), [`src/documate/core.py`](src.documate.core.md), [`src/documate/docs.py`](src.documate.docs.md), [`src/documate/extract.py`](src.documate.extract.md), [`src/documate/stats.py`](src.documate.stats.md), [`src/documate/ui.py`](src.documate.ui.md), [`src/documate/undo.py`](src.documate.undo.md)  ·  **used by** [`src/documate/briefs.py`](src.documate.briefs.md), [`src/documate/cli.py`](src.documate.cli.md)  ·  **discussed in** [`notes/v2-direction.md`](../../notes/v2-direction.md)
 
 ## API
 

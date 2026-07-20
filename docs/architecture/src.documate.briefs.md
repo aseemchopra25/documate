@@ -23,7 +23,7 @@ reads it, feeds each brief to the model, then re-runs `documate --check` — the
 itself is the verification loop. Emission is O(diff): a quiet repo writes an empty
 index and nothing else. Stdlib only.
 
-**depends on** [`src/documate/core.py`](src.documate.core.md), [`src/documate/docs.py`](src.documate.docs.md), [`src/documate/drift.py`](src.documate.drift.md), [`src/documate/extract.py`](src.documate.extract.md), [`src/documate/resolve.py`](src.documate.resolve.md)  ·  **used by** [`src/documate/check.py`](src.documate.check.md), [`src/documate/cli.py`](src.documate.cli.md), [`src/documate/prose.py`](src.documate.prose.md)  ·  **discussed in** [`notes/v2-direction.md`](../../notes/v2-direction.md)
+**depends on** [`src/documate/core.py`](src.documate.core.md), [`src/documate/docs.py`](src.documate.docs.md), [`src/documate/drift.py`](src.documate.drift.md), [`src/documate/extract.py`](src.documate.extract.md), [`src/documate/prose.py`](src.documate.prose.md), [`src/documate/resolve.py`](src.documate.resolve.md)  ·  **used by** [`src/documate/check.py`](src.documate.check.md), [`src/documate/cli.py`](src.documate.cli.md), [`src/documate/prose.py`](src.documate.prose.md)  ·  **discussed in** [`notes/v2-direction.md`](../../notes/v2-direction.md)
 
 ```mermaid
 flowchart TD
@@ -142,10 +142,10 @@ scope='all' walks every graph symbol (`docs --fix`, the fresh-repo seeding
 pass, where a diff section would be noise and is omitted). Empty without a
 graph.
 
-**called by** `emit`  ·  **calls** `_bottom_up`, `_diff`, `_fence`, `_no_doc`, `_span`, `_tail_sections`
+**called by** `emit`  ·  **calls** `_bottom_up`, `_definition_site`, `_diff`, `_fence`, `_no_doc`, `_span`, `_tail_sections`
 
 ### `_block_above(lines: list[str], idx: int) -> tuple[bool, bool, str]`
-`src/documate/briefs.py:320`
+`src/documate/briefs.py:333`
 
 (documented, doxygen, text) for the comment block directly above the
 0-indexed decl line: whether one exists, whether it is already a `/** */`
@@ -154,8 +154,19 @@ and its raw text (for spotting a `@param` contract).
 
 **called by** `_rewrite_briefs`
 
+### `_definition_site(lines: list[str], name: str, line) -> bool`
+`src/documate/briefs.py:346`
+
+True when the recorded line lands at a scope the inserter can write to —
+the same `_find_decl`/`_at_definition` probe prose runs at insert time, run
+at emission so a reference-site node (a C file that only *uses* a type
+defined elsewhere) never becomes a work order that is drafted, billed, then
+refused. The insert-time guard stays as the backstop.
+
+**called by** `_rewrite_briefs`, `_undoc_briefs`
+
 ### `_rewrite_briefs(ctx: Context, xrefs: tuple, tested: dict) -> list[tuple[str, dict]]`
-`src/documate/briefs.py:333`
+`src/documate/briefs.py:358`
 
 (text, index row) per C-family Function/Class — the `--rewrite` scope. Every
 C/C++ symbol gets a work order to (re)write its doc comment as Doxygen: the
@@ -173,10 +184,10 @@ merges decl and def — writing a second block would duplicate the contract), an
 definition that duplicates a Doxygen-documented prototype's contract gets a
 @brief-only order so the two blocks can't disagree.
 
-**called by** `emit`  ·  **calls** `_block_above`, `_fence`, `_span`, `_tail_sections`
+**called by** `emit`  ·  **calls** `_block_above`, `_definition_site`, `_fence`, `_span`, `_tail_sections`
 
 ### `_module_briefs(ctx: Context) -> list[tuple[str, dict]]`
-`src/documate/briefs.py:430`
+`src/documate/briefs.py:457`
 
 (text, index row) per module with no module-level prose — the top-of-file
 doc each architecture-page section leads with. Seeding-scope only: module
@@ -187,7 +198,7 @@ just written the file's docstrings when it summarizes the file.
 **called by** `emit`
 
 ### `undocumented(ctx: Context) -> list[dict]`
-`src/documate/briefs.py:495`
+`src/documate/briefs.py:522`
 
 The machine-readable undocumented map (`--list-undocumented`): one row per
 symbol with no docstring/doc-comment (kind "undocumented") and per module with
@@ -199,7 +210,7 @@ reverse-engineering it out of the generated pages.
 **calls** `_no_doc`
 
 ### `emit(ctx: Context, base: str, direct: list[dict], out_dir: Path, undocumented: str='changed', rewrite: bool=False) -> list[dict]`
-`src/documate/briefs.py:534`
+`src/documate/briefs.py:561`
 
 Write one work-order file per finding into `out_dir` plus a `briefs.json`
 index (the machine-readable half), clearing briefs from earlier runs first so a

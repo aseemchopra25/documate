@@ -797,6 +797,74 @@ class TestIncrementalIndex(RealGraph):
         stats = self.ctx.graph.index(incremental=True)
         self.assertIn("files_parsed", stats)  # full rebuild, not a no-op incremental
 
+    def test_incremental_prunes_moved_files(self):
+        # `git diff --name-only` reports only a rename's *new* path, so the old
+        # path's nodes must be purged by the stale sweep, not the diff — else a
+        # refactor leaves ghost symbols inflating every count until a --full.
+        _git(self.dir, "mv", "pkg/more.py", "pkg/renamed.py")
+        _git(self.dir, "commit", "-q", "-m", "mv")
+        stats = self.ctx.graph.index(incremental=True)
+        self.assertIn("files_updated", stats)  # the incremental path ran, not full
+        files = {f for _, f, _, _ in self.ctx.graph.nodes_by_name("driver")}
+        self.assertEqual(files, {str(self.dir / "pkg" / "renamed.py")})
+
+
+class TestBriefsDefinitionSite(unittest.TestCase):
+    """Work orders are emitted only for definition sites. A graph node recorded
+    where a C file merely *uses* a type would be drafted, billed, then refused by
+    the inserter's `_at_definition` guard — so emission runs the same probe and
+    drops it up front, which also makes `--dry-run` preview only real work."""
+
+    def setUp(self) -> None:
+        self.dir = Path(tempfile.mkdtemp(prefix="documate_defsite_")).resolve()
+        root = self.dir
+        _w(root / "src" / "types.c", "struct cherry { int pit; };\n")
+        _w(
+            root / "src" / "use.c",
+            "int eat(void) {\n    struct cherry c;\n    return 0;\n}\n",
+        )
+        db = root / ".documate" / "graph.db"
+        db.parent.mkdir(parents=True, exist_ok=True)
+        con = sqlite3.connect(db)
+        con.execute(
+            "CREATE TABLE nodes(name TEXT,kind TEXT,qualified_name TEXT,file_path TEXT,line_start INT,line_end INT,is_test INT DEFAULT 0)"
+        )
+        con.execute(
+            "CREATE TABLE edges(kind TEXT,source_qualified TEXT,target_qualified TEXT)"
+        )
+        types_c, use_c = (str(root / "src" / f) for f in ("types.c", "use.c"))
+        con.executemany(
+            "INSERT INTO nodes(name,kind,qualified_name,file_path,line_start,line_end) VALUES(?,?,?,?,?,?)",
+            [
+                ("cherry", "Class", f"{types_c}::cherry", types_c, 1, 1),
+                ("eat", "Function", f"{use_c}::eat", use_c, 1, 4),
+                # the failure mode: a node recorded at a *use* of the type,
+                # inside a function body, away from the real definition
+                ("cherry", "Class", f"{use_c}::cherry", use_c, 2, 2),
+            ],
+        )
+        con.commit()
+        con.close()
+        _git(root, "init", "-q")
+        _git(root, "add", "-A")
+        _git(root, "commit", "-q", "-m", "x")
+        self.ctx = Context.make(root)
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_rewrite_skips_reference_site_nodes(self):
+        index = BR.emit(self.ctx, "HEAD", [], self.dir / "b", rewrite=True)
+        got = {(r["file"], r["symbol"]) for r in index}
+        self.assertEqual(got, {("src/types.c", "cherry"), ("src/use.c", "eat")})
+
+    def test_undoc_briefs_skip_reference_site_nodes(self):
+        index = BR.emit(self.ctx, "HEAD", [], self.dir / "b", undocumented="all")
+        got = {(r["file"], r["symbol"]) for r in index if r["kind"] == "undocumented"}
+        self.assertEqual(got, {("src/types.c", "cherry"), ("src/use.c", "eat")})
+
 
 class TestStoreBatch(unittest.TestCase):
     """graph.py batches a file's nodes/edges into one executemany each. Guard the
@@ -3258,6 +3326,25 @@ class TestDeclDefMerge(unittest.TestCase):
             p, [{"qualified": "Cart.swift::Cart", "line": 5, "kind": "Class"}]
         )
         self.assertEqual(out["Cart"], ("final class Cart", "A cart."))
+
+    def test_a_return_type_use_is_not_the_types_declaration(self):
+        # `static struct s *fn(...)` names the type but *uses* it — the rescue
+        # must not hand the undocumented struct that function's signature and
+        # doc (it rendered as a duplicate entry on the function's page)
+        _w(
+            self.dir / "reader.c",
+            "static struct aliro_session {\n"
+            "    int conn_handle;\n"
+            "} sessions[2];\n\n"
+            "/** Find a session by handle. */\n"
+            "static struct aliro_session *session_find(int conn_handle)\n"
+            "{\n}\n",
+        )
+        out = EX.comment_symbols(
+            self.dir / "reader.c",
+            [{"qualified": "reader.c::aliro_session", "line": 1, "kind": "Class"}],
+        )
+        self.assertEqual(out["aliro_session"], ("static struct aliro_session", None))
 
     def test_prose_mentioning_the_name_is_not_a_declaration(self):
         # a comment line containing "class Cart" must not be mistaken for the decl —

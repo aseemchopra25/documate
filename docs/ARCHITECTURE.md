@@ -11,6 +11,7 @@ flowchart LR
   briefs --> docs
   briefs --> drift
   briefs --> extract
+  briefs --> prose
   briefs --> resolve
   check --> anchors
   check --> briefs
@@ -108,7 +109,7 @@ reads it, feeds each brief to the model, then re-runs `documate --check` — the
 itself is the verification loop. Emission is O(diff): a quiet repo writes an empty
 index and nothing else. Stdlib only.
 
-**depends on** [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/drift.py`](architecture/src.documate.drift.md), [`src/documate/extract.py`](architecture/src.documate.extract.md), [`src/documate/resolve.py`](architecture/src.documate.resolve.md)  ·  **used by** [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/cli.py`](architecture/src.documate.cli.md), [`src/documate/prose.py`](architecture/src.documate.prose.md)
+**depends on** [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/drift.py`](architecture/src.documate.drift.md), [`src/documate/extract.py`](architecture/src.documate.extract.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/resolve.py`](architecture/src.documate.resolve.md)  ·  **used by** [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/cli.py`](architecture/src.documate.cli.md), [`src/documate/prose.py`](architecture/src.documate.prose.md)
 
 ## [`src/documate/check.py`](architecture/src.documate.check.md)
 
@@ -238,7 +239,7 @@ layer can never trigger on its own output. The model dependency stays behind
 the subprocess boundary; output goes through `ui` (a live progress bar on a
 terminal, a plain transcript in CI).
 
-**depends on** [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/extract.py`](architecture/src.documate.extract.md), [`src/documate/stats.py`](architecture/src.documate.stats.md), [`src/documate/ui.py`](architecture/src.documate.ui.md), [`src/documate/undo.py`](architecture/src.documate.undo.md)  ·  **used by** [`src/documate/cli.py`](architecture/src.documate.cli.md)
+**depends on** [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/extract.py`](architecture/src.documate.extract.md), [`src/documate/stats.py`](architecture/src.documate.stats.md), [`src/documate/ui.py`](architecture/src.documate.ui.md), [`src/documate/undo.py`](architecture/src.documate.undo.md)  ·  **used by** [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/cli.py`](architecture/src.documate.cli.md)
 
 ## [`src/documate/site.py`](architecture/src.documate.site.md)
 
