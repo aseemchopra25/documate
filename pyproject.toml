@@ -39,6 +39,12 @@ dependencies = [
 [project.scripts]
 documate = "documate.cli:main"
 
+
+[project.urls]
+"Bug Tracker" = "https://github.com/aseemchopra25/documate/issues"
+Homepage = "https://github.com/aseemchopra25/documate"
+Repository = "https://github.com/aseemchopra25/documate"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
