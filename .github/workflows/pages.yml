@@ -1,12 +1,12 @@
 name: docs-site
 
 # Publish the `documate --html` site to GitHub Pages. Works for private repos too.
-# Enable once, then trigger from the Actions tab (or add a `push:` trigger below):
-#   repo Settings -> Pages -> Source: "GitHub Actions".
+# Republishes on every push to main; the Actions-tab trigger stays for one-off runs.
+# One-time setup: repo Settings -> Pages -> Source: "GitHub Actions".
 on:
   workflow_dispatch:
-  # push:            # uncomment to auto-publish on every push to main
-  #   branches: [main]
+  push:
+    branches: [main]
 
 permissions:
   contents: read
