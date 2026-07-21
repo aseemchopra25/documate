@@ -436,6 +436,23 @@ yellow >= 50, red below, dim zero), a 22-cell bar, covered/total statements —
 grouped by directory, with a TOTAL line. Colors turn off when stdout isn't a
 tty, so redirecting to a file stays clean. Stdlib only.
 
+## [`scripts/scan_hygiene.sh`](architecture/scripts.scan_hygiene.sh.md)
+
+Hygiene gate for the built site: refuse to publish pages that leak local
+filesystem paths, email addresses, or IP-looking strings. One copy of the
+patterns, shared by `make hygiene` and the pages workflow.
+Prints matching FILE PATHS only — the matched text itself never reaches a log.
+Usage: scan_hygiene.sh [site-dir]   (default: site)
+
+## [`scripts/scan_pii.sh`](architecture/scripts.scan_pii.sh.md)
+
+Personal-info deny-list scan. The patterns arrive via $PII_PATTERNS (one
+extended regex per line) and are deliberately never stored in the repo — a
+committed deny-list in a public repo would disclose the very strings it
+guards. CI feeds it from an Actions secret; `make pii` from a file outside
+the repo. Prints matching FILE PATHS only — matched text never reaches a log.
+Usage: PII_PATTERNS="$(cat ...)" scan_pii.sh [dir]   (default: .)
+
 ## [`src/documate/__init__.py`](architecture/src.documate.__init__.md)
 
 documate — generate docs from your code and keep them honest.
