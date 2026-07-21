@@ -1327,6 +1327,60 @@ class TestSite(RealGraph):
         self.assertIn("dead link", buf.getvalue())
         self.assertFalse((self.ctx.config.site_dir / "guides.a.html").exists())
 
+    def test_guide_images_ship_with_the_site(self):
+        # a standalone image line becomes a figure and the file rides into site/;
+        # a -light./-dark. pair shares one figure and follows the site theme.
+        img = self.dir / "docs" / "img"
+        img.mkdir(parents=True, exist_ok=True)
+        (img / "demo-light.png").write_bytes(b"\x89PNG light")
+        (img / "demo-dark.png").write_bytes(b"\x89PNG dark")
+        _w(
+            self.dir / "docs" / "guides" / "shots.md",
+            "# Shots\n\nSee it run:\n\n"
+            "![The demo](../img/demo-light.png)\n"
+            "![The demo](../img/demo-dark.png)\n",
+        )
+        self.assertEqual(SITE.run(self.ctx), 0)
+        page = (self.ctx.config.site_dir / "guides.shots.html").read_text()
+        self.assertIn('<figure class="shots">', page)
+        self.assertIn('<img class="shot-light" src="demo-light.png"', page)
+        self.assertIn('<img class="shot-dark" src="demo-dark.png"', page)
+        self.assertEqual(
+            (self.ctx.config.site_dir / "demo-light.png").read_bytes(),
+            b"\x89PNG light",
+        )
+
+    def test_missing_guide_image_fails_the_build(self):
+        import contextlib
+        import io
+
+        _w(
+            self.dir / "docs" / "guides" / "shots.md",
+            "# Shots\n\n![gone](../img/nope.png)\n",
+        )
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = SITE.run(self.ctx)
+        self.assertEqual(rc, 1)
+        self.assertIn("nope.png", buf.getvalue())
+
+    def test_pages_carry_social_meta(self):
+        # every page unfurls when linked: og:title/site_name everywhere, the
+        # page's own summary as og:description where one exists.
+        _w(
+            self.dir / "docs" / "guides" / "why.md",
+            "# The why\n\nThe reason this exists.\n",
+        )
+        self.assertEqual(SITE.run(self.ctx), 0)
+        index = (self.ctx.config.site_dir / "index.html").read_text()
+        self.assertIn('<meta property="og:title"', index)
+        self.assertIn('<meta property="og:site_name"', index)
+        guide = (self.ctx.config.site_dir / "guides.why.html").read_text()
+        self.assertIn(
+            '<meta property="og:description" content="The reason this exists.">',
+            guide,
+        )
+
     def test_guide_tables_render_as_tables(self):
         _w(
             self.dir / "docs" / "guides" / "t.md",
@@ -2835,6 +2889,41 @@ class TestMermaidLines(unittest.TestCase):
         self.assertIn('  a_b_["a(b)"]', lines)
         self.assertIn('  a_b__2["a[b]"]', lines)
 
+    def test_classes_resolve_through_the_id_table(self):
+        lines = DOCS._mermaid_lines(
+            [("a(b)", "core")], classes={"a(b)": "g0", "core": "g0", "ghost": "g1"}
+        )
+        self.assertIn("  class a_b_,core g0", lines)  # sanitized id, not the label
+        self.assertTrue(all("ghost" not in ln for ln in lines))  # not on the map
+
+    def test_clusters_wrap_members_in_classed_subgraphs(self):
+        lines = DOCS._mermaid_lines(
+            [("a", "b"), ("c", "b")], clusters={"mods": ["a", "c"], "lib": ["b"]}
+        )
+        self.assertIn('  subgraph c0["mods"]', lines)
+        self.assertIn("    a", lines)
+        self.assertIn('  subgraph c1["lib"]', lines)
+        self.assertIn("  class c0 h0", lines)  # box tint tracks the member hue
+        self.assertLess(lines.index("  end"), lines.index("  a --> b"))
+
+    def test_map_marks_hue_and_cluster_per_dir_when_several(self):
+        classes, clusters, caption = SITE._map_marks(
+            [("mods/a.c", "lib/b.c"), ("mods/c.c", "lib/b.c")]
+        )
+        self.assertEqual(classes, {"a": "g0", "b": "g1", "c": "g0"})
+        self.assertEqual(clusters, {"mods": ["a", "c"], "lib": ["b"]})
+        self.assertIn("color-keyed by directory", caption)
+
+    def test_map_marks_roles_when_single_dir(self):
+        classes, clusters, caption = SITE._map_marks(
+            [("src/cli.py", "src/core.py"), ("src/cli.py", "src/docs.py")]
+        )
+        self.assertEqual(
+            classes, {"cli": "gentry", "core": "gleaf", "docs": "gleaf"}
+        )
+        self.assertEqual(clusters, {})
+        self.assertIn("entry points", caption)
+
 
 class TestHotspots(Base):
     """Churn × co-change mined from `git log`, pinned to one commit so the numbers
@@ -3333,18 +3422,18 @@ class TestDeclDefMerge(unittest.TestCase):
         # doc (it rendered as a duplicate entry on the function's page)
         _w(
             self.dir / "reader.c",
-            "static struct aliro_session {\n"
+            "static struct conn_session {\n"
             "    int conn_handle;\n"
             "} sessions[2];\n\n"
             "/** Find a session by handle. */\n"
-            "static struct aliro_session *session_find(int conn_handle)\n"
+            "static struct conn_session *session_find(int conn_handle)\n"
             "{\n}\n",
         )
         out = EX.comment_symbols(
             self.dir / "reader.c",
-            [{"qualified": "reader.c::aliro_session", "line": 1, "kind": "Class"}],
+            [{"qualified": "reader.c::conn_session", "line": 1, "kind": "Class"}],
         )
-        self.assertEqual(out["aliro_session"], ("static struct aliro_session", None))
+        self.assertEqual(out["conn_session"], ("static struct conn_session", None))
 
     def test_prose_mentioning_the_name_is_not_a_declaration(self):
         # a comment line containing "class Cart" must not be mistaken for the decl —
