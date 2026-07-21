@@ -27,6 +27,8 @@ import posixpath
 import re
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
+from pathlib import Path
 
 from . import ui
 from .core import STAMPS, Context
@@ -44,7 +46,9 @@ from .docs import (
 
 _CODE_RE = re.compile(r"`([^`]+)`")
 _BOLD_RE = re.compile(r"\*\*([^*]+)\*\*")
+_EM_RE = re.compile(r"\*([^*]+)\*")
 _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
+_IMG_RE = re.compile(r"^!\[([^\]]*)\]\(([^)\s]+)\)$")  # a standalone image line
 
 # The landing page draws the module map only while it stays legible; past this many
 # edges it reads as a hairball, and the architecture page still carries the full one.
@@ -58,49 +62,32 @@ _HEAD_SCRIPTS = (
     '<script defer src="nav.js"></script>'
 )
 
+# Dark-first: :root IS the dark palette and there is no OS-preference media query —
+# light mode exists only as the explicit data-theme="light" opt-in from the toggle.
 _CSS = r""":root{
-  --ground:#f7f8fa; --surface:#ffffff; --raise:#eff1f5; --card:#ffffff;
-  --ink:#1d2129; --strong:#0e1116; --muted:#5c6470; --faint:#8b93a0;
-  --line:rgba(18,26,38,.12); --hairline:rgba(18,26,38,.075);
-  --accent:#0a69da; --accent-ink:#085ec2; --tint:rgba(10,105,218,.085); --tint-line:rgba(10,105,218,.28);
-  --ok:#189a4e;
+  --ground:#0a0d0b; --surface:#101410; --raise:#181e19; --card:#121712;
+  --ink:#d2dbd3; --strong:#f0f6f0; --muted:#8b9d90; --faint:#5d6b60;
+  --line:rgba(214,240,222,.13); --hairline:rgba(214,240,222,.07);
+  --accent:#3fcf8e; --accent-ink:#6fe3ab; --tint:rgba(63,207,142,.11); --tint-line:rgba(63,207,142,.38);
+  --ok:#3ecf7a;
   --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
   --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  --shadow:0 1px 2px rgba(14,20,30,.05),0 10px 30px -18px rgba(14,20,30,.18);
-  --shadow-lg:0 28px 70px -24px rgba(14,20,30,.4);
-  --article:46rem; --side:16.5rem;
-}
-@media (prefers-color-scheme:dark){:root{
-  --ground:#0b0c0f; --surface:#121419; --raise:#1a1d24; --card:#14171d;
-  --ink:#d8dde5; --strong:#f4f6fa; --muted:#8f98a5; --faint:#5f6875;
-  --line:rgba(226,235,248,.13); --hairline:rgba(226,235,248,.07);
-  --accent:#3f97f5; --accent-ink:#7cb5f9; --tint:rgba(77,159,255,.12); --tint-line:rgba(77,159,255,.38);
-  --ok:#3ecf7a;
   --shadow:0 1px 2px rgba(0,0,0,.5),0 14px 34px -16px rgba(0,0,0,.6);
   --shadow-lg:0 34px 80px -24px rgba(0,0,0,.75);
-}}
+  --article:46rem; --side:16.5rem;
+}
 :root[data-theme="light"]{
-  --ground:#f7f8fa; --surface:#ffffff; --raise:#eff1f5; --card:#ffffff;
-  --ink:#1d2129; --strong:#0e1116; --muted:#5c6470; --faint:#8b93a0;
-  --line:rgba(18,26,38,.12); --hairline:rgba(18,26,38,.075);
-  --accent:#0a69da; --accent-ink:#085ec2; --tint:rgba(10,105,218,.085); --tint-line:rgba(10,105,218,.28);
+  --ground:#f6f8f6; --surface:#ffffff; --raise:#edf1ee; --card:#ffffff;
+  --ink:#1d241f; --strong:#0d130e; --muted:#5c675f; --faint:#8a948c;
+  --line:rgba(20,34,25,.13); --hairline:rgba(20,34,25,.075);
+  --accent:#0e8a4d; --accent-ink:#0b703f; --tint:rgba(14,138,77,.09); --tint-line:rgba(14,138,77,.3);
   --ok:#189a4e;
   --shadow:0 1px 2px rgba(14,20,30,.05),0 10px 30px -18px rgba(14,20,30,.18);
   --shadow-lg:0 28px 70px -24px rgba(14,20,30,.4);
 }
-:root[data-theme="dark"]{
-  --ground:#0b0c0f; --surface:#121419; --raise:#1a1d24; --card:#14171d;
-  --ink:#d8dde5; --strong:#f4f6fa; --muted:#8f98a5; --faint:#5f6875;
-  --line:rgba(226,235,248,.13); --hairline:rgba(226,235,248,.07);
-  --accent:#3f97f5; --accent-ink:#7cb5f9; --tint:rgba(77,159,255,.12); --tint-line:rgba(77,159,255,.38);
-  --ok:#3ecf7a;
-  --shadow:0 1px 2px rgba(0,0,0,.5),0 14px 34px -16px rgba(0,0,0,.6);
-  --shadow-lg:0 34px 80px -24px rgba(0,0,0,.75);
-}
 *{box-sizing:border-box}
-html{color-scheme:light dark}
+html{color-scheme:dark}
 :root[data-theme="light"]{color-scheme:light}
-:root[data-theme="dark"]{color-scheme:dark}
 body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);
   font-size:16px;line-height:1.65;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 a{color:var(--accent-ink);text-decoration:none}
@@ -173,24 +160,25 @@ code{font-family:var(--mono)}
 .icon-btn:hover{color:var(--ink);background:var(--raise)}
 .icon-btn svg{width:1rem;height:1rem}
 .menu-btn{display:none}
-.sun{display:none}
-:root[data-theme="dark"] .sun{display:block}
-:root[data-theme="dark"] .moon{display:none}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .sun{display:block}
-  :root:not([data-theme="light"]) .moon{display:none}}
+.moon{display:none}
+:root[data-theme="light"] .sun{display:none}
+:root[data-theme="light"] .moon{display:block}
 
 .mid{display:grid;grid-template-columns:1fr minmax(0,var(--article)) 1fr;column-gap:2.75rem}
 .mid:has(.doc.reading){--article:42.5rem}
-.doc{grid-column:2;min-width:0;padding:3rem 0 7rem;line-height:1.72;animation:rise .45s cubic-bezier(.2,.7,.2,1) both}
+.doc{grid-column:2;min-width:0;padding:3rem 0 7rem;line-height:1.72;animation:rise .45s cubic-bezier(.2,.7,.2,1)}
+/* no fill-mode above: `both` would leave a permanent (identity) transform on the
+   article, and a transformed ancestor hijacks position:fixed — the maximized
+   graph would pin to the article, not the viewport */
 .doc.reading p{margin:1.1rem 0}
 @keyframes rise{from{opacity:0;transform:translateY(8px)}}
-.doc h1{font-size:1.85rem;font-weight:650;letter-spacing:-.021em;color:var(--strong);
+.doc h1{font-family:var(--mono);font-size:1.75rem;font-weight:650;letter-spacing:-.012em;color:var(--strong);
   margin:.15rem 0 1.05rem;text-wrap:balance;line-height:1.18}
-.doc h1.mono{font-family:var(--mono);font-size:1.6rem;letter-spacing:-.01em;overflow-wrap:anywhere}
+.doc h1.mono{font-size:1.6rem;letter-spacing:-.01em;overflow-wrap:anywhere}
 .eyebrow{font-size:.7rem;font-weight:650;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:.65rem}
 .eyebrow code{font-size:.95em;text-transform:none;letter-spacing:.02em;color:var(--muted)}
-.doc h2{font-size:1.25rem;font-weight:650;letter-spacing:-.014em;margin:2.6rem 0 .9rem;color:var(--strong)}
-.doc h3{font-size:1.02rem;font-weight:650;margin:1.7rem 0 .45rem;color:var(--strong)}
+.doc h2{font-family:var(--mono);font-size:1.18rem;font-weight:650;letter-spacing:-.01em;margin:2.6rem 0 .9rem;color:var(--strong)}
+.doc h3{font-family:var(--mono);font-size:.98rem;font-weight:650;margin:1.7rem 0 .45rem;color:var(--strong)}
 .doc h4{font-size:.92rem;font-weight:650;margin:1.2rem 0 .3rem}
 .doc p{margin:.9rem 0}
 .doc p a,.doc li a,.doc td a{text-decoration:underline;
@@ -219,7 +207,16 @@ pre{background:var(--raise);border:1px solid var(--hairline);border-radius:12px;
 .graph-shell{border:1px solid var(--hairline);border-radius:16px;margin:0;background:
   radial-gradient(circle at 1px 1px,var(--hairline) 1px,transparent 0) 0 0/22px 22px,var(--surface);
   overflow:auto;max-height:33rem;display:flex;justify-content:safe center;
-  align-items:safe center;box-shadow:var(--shadow)}
+  align-items:safe center;box-shadow:var(--shadow);cursor:grab}
+.graph-shell.panning{cursor:grabbing;user-select:none}
+.graph-wrap figcaption{margin-top:.6rem;text-align:center;font-size:.74rem;color:var(--faint);
+  line-height:1.5;text-wrap:balance}
+.graph-wrap.tall .graph-shell{max-height:calc(100vh - 11rem)}
+.graph-wrap.max{position:fixed;inset:0;z-index:80;margin:0;padding:1rem;
+  background:var(--ground);display:flex;flex-direction:column}
+.graph-wrap.max .graph-shell{max-height:none;width:100%;flex:1}
+.graph-wrap.max .graph-tools{top:1.6rem;right:1.6rem}
+.graph-wrap.max figcaption{flex:none;padding:.35rem 0 .1rem}
 .graph-tools{position:absolute;top:.65rem;right:.65rem;display:flex;gap:.3rem;z-index:2}
 .graph-tools button{min-width:1.9rem;height:1.9rem;padding:0 .5rem;border:1px solid var(--line);
   border-radius:8px;background:var(--surface);color:var(--muted);font-family:var(--sans);
@@ -229,6 +226,12 @@ pre{background:var(--raise);border:1px solid var(--hairline);border-radius:12px;
   text-transform:uppercase;color:var(--faint)}
 pre.mermaid{margin:0;padding:1.8rem;background:none;border:0;border-radius:0;overflow:visible;
   font-size:.78rem;color:var(--faint)}
+
+.shots{margin:1.6rem 0;text-align:center}
+.shots img{max-width:100%;height:auto;border-radius:14px;box-shadow:var(--shadow)}
+.shot-light{display:none}
+:root[data-theme="light"] .shot-light{display:inline}
+:root[data-theme="light"] .shot-dark{display:none}
 
 .rows{list-style:none;padding:0;margin:.3rem 0 1.6rem}
 .rows li{border-top:1px solid var(--hairline)}
@@ -249,9 +252,9 @@ pre.mermaid{margin:0;padding:1.8rem;background:none;border:0;border-radius:0;ove
 .hero-band{position:relative;overflow:hidden;border-bottom:1px solid var(--hairline);
   background:linear-gradient(180deg,var(--tint),transparent 82%)}
 .hero-in{position:relative;max-width:var(--article);margin:0 auto;padding:2.7rem 0 2.1rem}
-.hero-in h1{font-size:1.9rem;font-weight:700;letter-spacing:-.022em;color:var(--strong);
+.hero-in h1{font-family:var(--mono);font-size:1.8rem;font-weight:700;letter-spacing:-.014em;color:var(--strong);
   margin:.3rem 0 .55rem;line-height:1.15;text-wrap:balance}
-.hero-in h1.mono{font-family:var(--mono);font-size:1.6rem;overflow-wrap:anywhere}
+.hero-in h1.mono{font-size:1.6rem;overflow-wrap:anywhere}
 .hero-in .lede{margin-bottom:.2rem}
 .hero-art{position:absolute;right:-3.5rem;top:-3.5rem;width:24rem;height:24rem;color:var(--accent);
   opacity:.16;pointer-events:none}
@@ -261,7 +264,7 @@ pre.mermaid{margin:0;padding:1.8rem;background:none;border:0;border-radius:0;ove
 .hero-in:has(.hero-grid){max-width:74rem}
 @media (min-width:1100px){.hero-grid{grid-template-columns:minmax(0,1fr) minmax(0,27rem)}}
 .hero{padding:.6rem 0 .4rem;min-width:0}
-.hero h1{font-size:clamp(2.3rem,4.8vw,3.2rem);line-height:1.05;letter-spacing:-.028em;margin:.4rem 0 .7rem}
+.hero h1{font-size:clamp(2rem,4.2vw,2.8rem);line-height:1.08;letter-spacing:-.016em;margin:.4rem 0 .7rem}
 .hero .lede{margin-bottom:1.4rem}
 .hero .stats{margin:1.9rem 0 0}
 .pill{display:inline-flex;align-items:center;gap:.45rem;padding:.36rem .85rem;border:1px solid var(--tint-line);
@@ -277,20 +280,20 @@ pre.mermaid{margin:0;padding:1.8rem;background:none;border:0;border-radius:0;ove
 .cmdchip button:hover{color:var(--accent-ink);border-color:var(--tint-line)}
 .cmdchip button.done{color:var(--ok);border-color:var(--ok)}
 .hero-side{min-width:0}
-.term{border:1px solid rgba(140,150,168,.25);border-radius:14px;background:#0d1117;
+.term{border:1px solid rgba(150,168,155,.25);border-radius:14px;background:#0c110d;
   box-shadow:var(--shadow-lg);overflow:hidden}
-.t-head{display:flex;align-items:center;gap:.45rem;padding:.6rem .95rem;background:#151b23;
+.t-head{display:flex;align-items:center;gap:.45rem;padding:.6rem .95rem;background:#141b16;
   border-bottom:1px solid rgba(255,255,255,.06)}
 .t-dot{width:.68rem;height:.68rem;border-radius:99px}
-.t-title{margin-left:.45rem;font-family:var(--mono);font-size:.7rem;color:#8b95a3}
+.t-title{margin-left:.45rem;font-family:var(--mono);font-size:.7rem;color:#87988c}
 .t-body{padding:1.05rem 1.2rem;font-family:var(--mono);font-size:.78rem;line-height:2;
-  color:#d7dde6;overflow-x:auto;scrollbar-width:thin;scrollbar-color:#2a3140 transparent}
+  color:#d3dcd4;overflow-x:auto;scrollbar-width:thin;scrollbar-color:#26302a transparent}
 .t-line{white-space:pre;opacity:0;animation:tline .4s ease-out forwards;
   animation-delay:calc(var(--i,0)*110ms)}
 @keyframes tline{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .t-p{color:#3fcf8e;margin-right:.6rem}
-.t-c{color:#7c8797}
-.t-cur{display:inline-block;width:.55em;height:1.05em;background:#d7dde6;vertical-align:text-bottom;
+.t-c{color:#7e8f83}
+.t-cur{display:inline-block;width:.55em;height:1.05em;background:#d3dcd4;vertical-align:text-bottom;
   animation:blink 1.1s steps(1) infinite}
 @keyframes blink{50%{opacity:0}}
 .feats{list-style:none;padding:0;margin:2.4rem 0 .4rem;display:grid;gap:.9rem;
@@ -313,12 +316,10 @@ pre.mermaid{margin:0;padding:1.8rem;background:none;border:0;border-radius:0;ove
   border:1px solid var(--line);background:var(--surface);color:var(--ink);font-size:.9rem;font-weight:550;
   transition:border-color .15s,background .15s,color .15s}
 .btn:hover{border-color:var(--tint-line);color:var(--accent-ink)}
-.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff}
-.btn-primary:hover{background:var(--accent-ink);border-color:var(--accent-ink);color:#fff}
-:root[data-theme="dark"] .btn-primary{color:#0b0c0f}
-:root[data-theme="dark"] .btn-primary:hover{color:#0b0c0f}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn-primary{color:#0b0c0f}
-  :root:not([data-theme="light"]) .btn-primary:hover{color:#0b0c0f}}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#08120c}
+.btn-primary:hover{background:var(--accent-ink);border-color:var(--accent-ink);color:#08120c}
+:root[data-theme="light"] .btn-primary{color:#fff}
+:root[data-theme="light"] .btn-primary:hover{color:#fff}
 
 .api{display:flex;flex-direction:column;margin-top:.2rem}
 .api-entry{position:relative;padding:1.55rem 0 .9rem;border-top:1px solid var(--hairline)}
@@ -433,7 +434,7 @@ if(tree){
     tree.appendChild(gbox);
   }
   // reference tree, two levels: one cap per top-level directory, one collapsible
-  // group per remaining path — "modules" then "woz_uwb/src/aliro", never the full path
+  // group per remaining path — "modules" then "engine/src/reader", never the full path
   const tops=new Map();
   for(const [dir,items] of NAV.groups){
     const top=dir==="/"?"/":dir.split("/")[0];
@@ -463,7 +464,7 @@ if(tree){
 }
 // theme
 const saved=store.get("dm-theme");if(saved)root.dataset.theme=saved;
-const isDark=()=>root.dataset.theme?root.dataset.theme==="dark":matchMedia("(prefers-color-scheme:dark)").matches;
+const isDark=()=>root.dataset.theme!=="light";
 const themeBtn=document.getElementById("themeBtn");
 if(themeBtn)themeBtn.onclick=()=>{root.dataset.theme=isDark()?"light":"dark";store.set("dm-theme",root.dataset.theme);drawMermaid()};
 // mobile drawer
@@ -473,38 +474,116 @@ const menuBtn=document.getElementById("menuBtn");if(menuBtn)menuBtn.onclick=()=>
 // mermaid, themed off the site palette; useMaxWidth:false keeps big graphs at natural
 // size inside the scrollable shell instead of squashing them to fit
 const MTHEME={
-  light:{background:"transparent",primaryColor:"#ffffff",primaryBorderColor:"#c3ccd8",primaryTextColor:"#1d2129",
-    lineColor:"#8b93a0",secondaryColor:"#eff1f5",tertiaryColor:"#f7f8fa",fontSize:"13px"},
-  dark:{background:"transparent",primaryColor:"#1a1d24",primaryBorderColor:"#3a4250",primaryTextColor:"#d8dde5",
-    lineColor:"#5f6875",secondaryColor:"#14171d",tertiaryColor:"#121419",fontSize:"13px"}};
+  light:{background:"transparent",primaryColor:"#ffffff",primaryBorderColor:"#c4cfc7",primaryTextColor:"#1d241f",
+    lineColor:"#8a948c",secondaryColor:"#edf1ee",tertiaryColor:"#f6f8f6",fontSize:"13px"},
+  dark:{background:"transparent",primaryColor:"#181e19",primaryBorderColor:"#3c4a40",primaryTextColor:"#d2dbd3",
+    lineColor:"#5d6b60",secondaryColor:"#121712",tertiaryColor:"#101410",fontSize:"13px"}};
 // zoom controls per diagram: scale the rendered svg by setting its width, so the
 // scroll area tracks the zoom. Fit caps at 1:1 — node text is unreadable smaller.
+// Rebuilt on every render: a theme toggle replaces the svg, so nothing here may
+// close over one — state lives on the wrap (data-zoom/data-nat), the svg is
+// re-queried. The shell's wheel/drag wiring is attached once and survives.
 function graphTools(){
   document.querySelectorAll(".graph-wrap").forEach(w=>{
-    const shell=w.querySelector(".graph-shell"),svg=shell&&shell.querySelector("svg");
-    if(!svg)return;
-    svg.style.width="";svg.style.height="auto";
-    const nat=svg.getBoundingClientRect().width;
-    let k=parseFloat(w.dataset.zoom||"1");
-    const apply=()=>{svg.style.width=nat*k+"px";w.dataset.zoom=k};
-    if(!w.querySelector(".graph-tools")){
-      const t=el("div","graph-tools");
-      [["−","Zoom out",()=>k=Math.max(.2,k/1.25)],
-       ["+","Zoom in",()=>k=Math.min(2.5,k*1.25)],
-       ["Fit","Fit to width",()=>k=Math.min(1,(shell.clientWidth-32)/nat)]
-      ].forEach(([txt,label,fn])=>{
-        const b=el("button",null,txt);b.type="button";b.title=label;b.setAttribute("aria-label",label);
-        b.onclick=()=>{fn();apply()};t.appendChild(b);
-      });
-      w.appendChild(t);
+    const shell=w.querySelector(".graph-shell"),svg0=shell&&shell.querySelector("svg");
+    if(!svg0)return;
+    svg0.style.width="";svg0.style.height="auto";
+    const nb=svg0.getBoundingClientRect();
+    w.dataset.nat=nb.width;w.dataset.nath=nb.height;
+    const K=()=>parseFloat(w.dataset.zoom||"1");
+    const apply=k=>{w.dataset.zoom=k;const s=shell.querySelector("svg");
+      if(s){s.style.width=w.dataset.nat*k+"px";s.style.height="auto"}};
+    const fit=()=>apply(Math.min(1,(shell.clientWidth-32)/w.dataset.nat,
+      (shell.clientHeight-32)/w.dataset.nath));
+    const old=w.querySelector(".graph-tools");if(old)old.remove();
+    const t=el("div","graph-tools");
+    [["−","Zoom out",()=>apply(Math.max(.2,K()/1.25))],
+     ["+","Zoom in",()=>apply(Math.min(2.5,K()*1.25))],
+     ["Fit","Fit to width",fit]
+    ].forEach(([txt,label,fn])=>{
+      const b=el("button",null,txt);b.type="button";b.title=label;b.setAttribute("aria-label",label);
+      b.onclick=fn;t.appendChild(b);
+    });
+    const mx=el("button",null,w.classList.contains("max")?"✕":"⛶");
+    mx.type="button";mx.title="Toggle full screen";mx.setAttribute("aria-label","Toggle full screen");
+    mx.onclick=()=>{const on=w.classList.toggle("max");
+      document.body.style.overflow=on?"hidden":"";mx.textContent=on?"✕":"⛶";fit()};
+    t.appendChild(mx);
+    w.appendChild(t);
+    // a data-max map presents itself full screen once, on screens with room for
+    // it — after the article's entrance animation, whose transform would still
+    // hold the fixed overlay hostage (see the .doc CSS note)
+    if(w.dataset.max==="1"&&!w.dataset.maxDone&&matchMedia("(min-width:900px)").matches){
+      w.dataset.maxDone="1";
+      setTimeout(()=>{w.classList.add("max");
+        document.body.style.overflow="hidden";mx.textContent="✕";fit()},480);
     }
-    apply();
+    if(!shell.dataset.wired){
+      shell.dataset.wired="1";
+      // ⌘/ctrl+wheel zooms around the cursor; plain and shift+wheel stay the
+      // browser's own vertical/horizontal scroll — never intercepted.
+      shell.addEventListener("wheel",e=>{
+        if(!(e.metaKey||e.ctrlKey))return;
+        e.preventDefault();
+        const k0=K(),k=Math.min(2.5,Math.max(.2,k0*(e.deltaY<0?1.15:1/1.15)));
+        if(k===k0)return;
+        const r=shell.getBoundingClientRect(),cx=e.clientX-r.left,cy=e.clientY-r.top,s=k/k0;
+        apply(k);
+        shell.scrollLeft=(shell.scrollLeft+cx)*s-cx;
+        shell.scrollTop=(shell.scrollTop+cy)*s-cy;
+      },{passive:false});
+      let drag=null;
+      shell.addEventListener("pointerdown",e=>{
+        if(e.button!==0||e.target.closest("a,button"))return;
+        drag={x:e.clientX,y:e.clientY,l:shell.scrollLeft,t:shell.scrollTop};
+        shell.setPointerCapture(e.pointerId);shell.classList.add("panning");
+      });
+      shell.addEventListener("pointermove",e=>{if(!drag)return;
+        shell.scrollLeft=drag.l-(e.clientX-drag.x);shell.scrollTop=drag.t-(e.clientY-drag.y)});
+      const drop=()=>{drag=null;shell.classList.remove("panning")};
+      shell.addEventListener("pointerup",drop);shell.addEventListener("pointercancel",drop);
+    }
+    if(w.dataset.zoom)apply(K());else fit();
   });
+}
+addEventListener("keydown",e=>{
+  if(e.key!=="Escape")return;
+  const m=document.querySelector(".graph-wrap.max");
+  if(!m)return;
+  m.classList.remove("max");document.body.style.overflow="";
+  const b=m.querySelector(".graph-tools button:last-child");if(b)b.textContent="⛶";
+});
+// colors for the `class … gN/gentry/gleaf` marks the generator leaves in the
+// mermaid source: one golden-angle hue per directory class, fixed hues for the
+// role classes (entry=green, leaf=steel). Injected per theme at render time so
+// the offline fallback text stays unstyled. Colors are emitted as hex — mermaid
+// splits classDef styles on commas, so hsl()'s comma form is unsafe there.
+const hx=(h,s,l)=>{s/=100;l/=100;const a=s*Math.min(l,1-l),
+  f=n=>{const k=(n+h/30)%12,c=l-a*Math.max(-1,Math.min(k-3,9-k,1));
+    return Math.round(c*255).toString(16).padStart(2,"0")};
+  return "#"+f(0)+f(8)+f(4)};
+function classDefs(src){
+  const marks=new Set(src.match(/\b(g\d+|h\d+|gentry|gleaf)\b/g)||[]);
+  const dark=isDark(),ink=dark?"#f0f6f0":"#0d130e";
+  const box=h=>dark?`fill:${hx(h,30,17)},stroke:${hx(h,45,42)},color:${ink}`
+                   :`fill:${hx(h,55,92)},stroke:${hx(h,40,48)},color:${ink}`;
+  // cluster boxes: same hue as their members, but a whisper of it — the box is
+  // context, the nodes are the content
+  const tint=h=>dark?`fill:${hx(h,25,10)},stroke:${hx(h,30,28)},color:${hx(h,20,62)}`
+                    :`fill:${hx(h,45,97)},stroke:${hx(h,35,78)},color:${hx(h,30,38)}`;
+  let out="";
+  for(const m of marks){
+    const n=m==="gentry"?null:m==="gleaf"?null:+m.slice(1);
+    const h=m==="gentry"?152:m==="gleaf"?215:Math.round(152+137.508*n)%360;
+    out+=`\n  classDef ${m} ${m[0]==="h"?tint(h):box(h)}`;
+  }
+  return out;
 }
 function drawMermaid(){
   if(!window.mermaid)return;
   const nodes=document.querySelectorAll("pre.mermaid");
-  nodes.forEach(n=>{if(!n.dataset.src)n.dataset.src=n.textContent;n.removeAttribute("data-processed");n.innerHTML=n.dataset.src});
+  nodes.forEach(n=>{if(!n.dataset.src)n.dataset.src=n.textContent;n.removeAttribute("data-processed");
+    n.textContent=n.dataset.src+classDefs(n.dataset.src)});
   try{mermaid.initialize({startOnLoad:false,securityLevel:"loose",theme:"base",
     themeVariables:MTHEME[isDark()?"dark":"light"],flowchart:{useMaxWidth:false},
     fontFamily:'ui-monospace,SFMono-Regular,Menlo,monospace'});
@@ -690,17 +769,21 @@ class Guide:
 
 
 def _md_inline(text: str) -> str:
-    """`_inline` plus the guide-markdown spans: **bold** and [link](url)."""
+    """`_inline` plus the guide-markdown spans: **bold**, *em* and [link](url).
+    Bold substitutes first so the em pass only ever sees single asterisks."""
     s = _BOLD_RE.sub(r"<strong>\1</strong>", _inline(text))
+    s = _EM_RE.sub(r"<em>\1</em>", s)
     return _LINK_RE.sub(r'<a href="\2">\1</a>', s)
 
 
 def _markdown(text: str) -> str:
     """Authored-guide markdown -> HTML: the subset guides actually use — headings,
     paragraphs, fenced code (```mermaid fences become live diagrams), flat lists,
-    inline code/bold/links. Anchor comments (and any other HTML comment) vanish:
-    they're for `check`, not for readers. Not a full markdown engine on purpose; the
-    committed .md stays the canonical rendering."""
+    inline code/bold/links, and standalone image lines (consecutive ones share a
+    figure; a `-light.`/`-dark.` pair renders as one theme-following image).
+    Anchor comments (and any other HTML comment) vanish: they're for `check`, not
+    for readers. Not a full markdown engine on purpose; the committed .md stays
+    the canonical rendering."""
     text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
     lines = text.splitlines()
     out: list[str] = []
@@ -770,6 +853,34 @@ def _markdown(text: str) -> str:
                 )
             tbl.append("</tbody></table>")
             out.append("".join(tbl))
+        elif _IMG_RE.match(s):
+            flush()
+            imgs = []
+            while i < len(lines) and (m := _IMG_RE.match(lines[i].strip())):
+                imgs.append(m)
+                i += 1
+            i -= 1
+            srcs = [m.group(2) for m in imgs]
+            pair = (
+                len(srcs) == 2
+                and any("-light." in x for x in srcs)
+                and any("-dark." in x for x in srcs)
+            )
+
+            def cls(src: str) -> str:
+                """The theme class for one image of a light/dark pair."""
+                if pair and "-dark." in src:
+                    return ' class="shot-dark"'
+                if pair and "-light." in src:
+                    return ' class="shot-light"'
+                return ""
+
+            tags = "".join(
+                f'<img{cls(m.group(2))} src="{html.escape(m.group(2))}"'
+                f' alt="{html.escape(m.group(1))}">'
+                for m in imgs
+            )
+            out.append(f'<figure class="shots">{tags}</figure>')
         elif not s:
             flush()
         else:
@@ -862,23 +973,30 @@ def _page_hrefs(model: Model, guides: list[Guide]) -> dict[str, str]:
 _SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
 
 
-def _resolve_links(ctx: Context, model: Model, guides: list[Guide]) -> list[str]:
+def _resolve_links(
+    ctx: Context, model: Model, guides: list[Guide]
+) -> tuple[list[str], dict[str, Path]]:
     """Rewrite every relative link in the authored guides to its real site target
     — a sibling .md becomes its .html page, a repo file becomes the remote's blob
-    URL at default_base — and return a line per link that resolves to nothing
-    (the caller fails the build: a shipped dead link is doc rot, the exact thing
-    the tool exists to stop). Scheme-carrying links (http, mailto) and bare
+    URL at default_base, a standalone image line points at a flat copy the caller
+    ships into site_dir — and return (dead, assets): a line per link or image that
+    resolves to nothing (the caller fails the build: a shipped dead link is doc
+    rot, the exact thing the tool exists to stop) and {site filename: source file}
+    for every image the site needs. Scheme-carrying links (http, mailto) and bare
     #anchors pass through; fenced code blocks are left untouched."""
     hrefs = _page_hrefs(model, guides)
     remote = _remote_base(ctx)
     branch = ctx.config.default_base
     dead: list[str] = []
+    assets: dict[str, Path] = {}
     for g in guides:
         at = posixpath.dirname(g.rel)
 
         def swap(m: re.Match, _g: Guide = g, _at: str = at) -> str:
             """One matched markdown link, rewritten to its site target — or kept
             as written, recording it dead when nothing resolves."""
+            if m.start() and m.string[m.start() - 1] == "!":
+                return m.group(0)  # an inline image, not a link
             label, target = m.group(1), m.group(2)
             base, _, frag = target.partition("#")
             if _SCHEME.match(target) or not base:
@@ -901,19 +1019,103 @@ def _resolve_links(ctx: Context, model: Model, guides: list[Guide]) -> list[str]
             if ln.strip().startswith("```"):
                 fenced = not fenced
                 out.append(ln)
-            else:
-                out.append(ln if fenced else _LINK_RE.sub(swap, ln))
+                continue
+            if fenced:
+                out.append(ln)
+                continue
+            img = _IMG_RE.match(ln.strip())
+            if img and not _SCHEME.match(img.group(2)):
+                rp = posixpath.normpath(
+                    posixpath.join(model.docs_rel, at, img.group(2))
+                )
+                src = ctx.root / rp
+                if rp.startswith("..") or not src.is_file():
+                    dead.append(f"{g.rel}: ({img.group(2)}) — no image file there")
+                    out.append(ln)
+                    continue
+                name = posixpath.basename(rp)
+                if assets.get(name, src) != src:  # two dirs, same basename
+                    name = _slug(rp)
+                assets[name] = src
+                out.append(f"![{img.group(1)}]({name})")
+                continue
+            out.append(_LINK_RE.sub(swap, ln))
         g.text = "\n".join(out)
-    return dead
+    return dead, assets
 
 
-def _mermaid(kind: str, edges) -> str:
-    """A client-rendered flowchart: the mermaid text itself is the offline fallback."""
-    rows = "\n".join(html.escape(ln) for ln in _mermaid_lines(list(edges)))
-    return (
-        '<figure class="graph-wrap"><div class="graph-shell">'
-        f'<pre class="mermaid">flowchart {kind}\n{rows}</pre></div></figure>'
+def _mermaid(
+    kind: str,
+    edges,
+    classes: dict[str, str] | None = None,
+    clusters: dict[str, list[str]] | None = None,
+    caption: str | None = None,
+    tall: bool = False,
+    open_max: bool = False,
+) -> str:
+    """A client-rendered flowchart: the mermaid text itself is the offline fallback.
+    `classes`/`clusters` mark nodes and directory boxes without colors — nav.js
+    injects the matching theme-aware `classDef` lines at render time. `tall` lets
+    the shell grow toward the viewport, `open_max` makes the figure present itself
+    full-screen on first load (nav.js honors it on wide screens only), and
+    `caption` renders as the figcaption carrying the interaction hints."""
+    rows = "\n".join(
+        html.escape(ln) for ln in _mermaid_lines(list(edges), classes, clusters)
     )
+    cap = f"<figcaption>{html.escape(caption)}</figcaption>" if caption else ""
+    tall_cls = " tall" if tall else ""
+    max_attr = ' data-max="1"' if open_max else ""
+    return (
+        f'<figure class="graph-wrap{tall_cls}"{max_attr}><div class="graph-shell">'
+        f'<pre class="mermaid">flowchart {kind}\n{rows}</pre></div>{cap}</figure>'
+    )
+
+
+_HINTS = "Drag to pan, ⌘ scroll or pinch to zoom, ⛶ for full screen."
+
+
+def _map_marks(
+    edges: list[tuple[str, str]],
+) -> tuple[dict[str, str], dict[str, list[str]], str]:
+    """(classes, clusters, caption) for a module map, nodes keyed by stem (the
+    map's node label). Spanning several directories, each directory becomes a
+    labeled cluster box and one hue class (`g0`, `g1`, … in first-seen order,
+    box classed `h0`, `h1`, … to match) — the map then reads as subsystems.
+    A single-directory map colors by graph role instead: `gentry` for modules
+    nothing imports (where reading starts), `gleaf` for modules importing
+    nothing else on the map."""
+    dirs: dict[str, str] = {}
+    for a, b in edges:
+        for rel in (a, b):
+            dirs.setdefault(Path(rel).stem, posixpath.dirname(rel) or "/")
+    if len(set(dirs.values())) > 1:
+        order: dict[str, int] = {}
+        classes = {
+            stem: "g{}".format(order.setdefault(d, len(order)))
+            for stem, d in dirs.items()
+        }
+        clusters: dict[str, list[str]] = {}
+        for stem, d in dirs.items():
+            clusters.setdefault("repository root" if d == "/" else d, []).append(stem)
+        caption = (
+            "Every module and its imports, grouped and color-keyed by directory. "
+            + _HINTS
+        )
+        return classes, clusters, caption
+    stems = [(Path(a).stem, Path(b).stem) for a, b in edges]
+    incoming = {b for _, b in stems}
+    outgoing = {a for a, _ in stems}
+    roles: dict[str, str] = {}
+    for stem in dirs:
+        if stem not in incoming:
+            roles[stem] = "gentry"
+        elif stem not in outgoing:
+            roles[stem] = "gleaf"
+    caption = (
+        "Every module and its imports. Green marks the entry points, "
+        "steel the foundations that import nothing further. " + _HINTS
+    )
+    return roles, {}, caption
 
 
 def _nav_labels(pages: list[Page]) -> dict[str, str]:
@@ -983,19 +1185,30 @@ def _layout(
     body: str,
     body_class: str = "",
     hero: str = "",
+    desc: str = "",
 ) -> str:
     """Wrap a page body in the shared shell: sidebar (brand + coverage, nav filled by
     nav.js), sticky top bar (breadcrumb + search + theme), an optional full-width hero
     band, the reading column, and the search palette. `active` (the page's slug) marks
     its nav link; everything else is one shared nav.js and style.css, so a page's size
-    never grows with the page count."""
+    never grows with the page count. `desc` feeds the description/OpenGraph meta, so
+    a shared link unfurls as the page's own summary instead of bare markup."""
     cov = model.coverage
     band = f'<header class="hero-band"><div class="hero-in">{hero}</div></header>' if hero else ""
+    meta = (
+        f'\n<meta name="description" content="{html.escape(desc)}">'
+        f'\n<meta property="og:description" content="{html.escape(desc)}">'
+        if desc
+        else ""
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="{html.escape(model.root_name)}">
+<meta property="og:title" content="{html.escape(title)}">{meta}
 <title>{html.escape(title)}</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -1329,12 +1542,10 @@ def _overview(model: Model, guides=(), lede: str = "", cmds: list[str] = ()) -> 
         '<div class="section-h" id="subsystems"><h2>Reference</h2><span class="rule"></span></div>'
     )
     if model.module_edges and len(model.module_edges) <= _MAP_CAP:
-        from pathlib import Path
-
-        stems = [
-            (Path(a).stem, Path(b).stem) for a, b in model.module_edges[:_EDGE_CAP]
-        ]
-        parts.append(_mermaid("LR", stems))
+        drawn = model.module_edges[:_EDGE_CAP]
+        stems = [(Path(a).stem, Path(b).stem) for a, b in drawn]
+        classes, clusters, caption = _map_marks(drawn)
+        parts.append(_mermaid("LR", stems, classes, clusters, caption))
     bydir: dict[str, list[Page]] = {}
     for p in model.pages:
         bydir.setdefault(os.path.dirname(p.rel) or "/", []).append(p)
@@ -1361,6 +1572,7 @@ def _overview(model: Model, guides=(), lede: str = "", cmds: list[str] = ()) -> 
         _crumb("Overview"),
         "\n".join(parts),
         hero=hero,
+        desc=_clip(_plain(lede), 200),
     )
 
 
@@ -1379,12 +1591,14 @@ def _architecture(model: Model) -> str:
     )
     parts = []
     if model.module_edges:
-        from pathlib import Path
-
-        stems = [
-            (Path(a).stem, Path(b).stem) for a, b in model.module_edges[:_EDGE_CAP]
-        ]
-        parts.append(_mermaid("LR", stems))
+        drawn = model.module_edges[:_EDGE_CAP]
+        stems = [(Path(a).stem, Path(b).stem) for a, b in drawn]
+        classes, clusters, caption = _map_marks(drawn)
+        parts.append(
+            _mermaid(
+                "LR", stems, classes, clusters, caption, tall=True, open_max=True
+            )
+        )
     parts.append('<div class="arch">')
     for p in pages:
         sec = [
@@ -1443,6 +1657,7 @@ def _guide(model: Model, g: Guide) -> str:
         _markdown("\n".join(lines)),
         "reading",
         hero=hero,
+        desc=_guide_desc(g.text),
     )
 
 
@@ -1556,7 +1771,7 @@ def run(ctx: Context) -> int:
         return 1
     guides = _guides(ctx)
     model = build_model(ctx)
-    dead = _resolve_links(ctx, model, guides)
+    dead, assets = _resolve_links(ctx, model, guides)
     if dead:
         for d in dead:
             ui.detail(f"DEAD  {d}", err=True, style="red")
@@ -1571,6 +1786,8 @@ def run(ctx: Context) -> int:
     (sdir / ".nojekyll").write_text("")
     for name, text in sorted(want.items()):
         (sdir / name).write_text(text)
+    for name, src in sorted(assets.items()):
+        (sdir / name).write_bytes(src.read_bytes())
     for stale in sdir.glob("*.html"):
         if stale.name not in want:
             stale.unlink()

@@ -366,7 +366,7 @@ labeled as what it is, so evidence never masquerades as documentation.
 
 **called by** `_group_index`, `_overview`
 
-### `_mermaid_lines(edges: list[tuple[str, str]]) -> list[str]`
+### `_mermaid_lines(edges: list[tuple[str, str]], classes: dict[str, str] | None=None, clusters: dict[str, list[str]] | None=None) -> list[str]`
 `src/documate/docs.py:910`
 
 Mermaid edge lines with parse-safe node ids. `(`/`[` open shape syntax in
@@ -375,18 +375,25 @@ becomes a mislabeled shape or a parse error (zod dogfood). Ids keep word
 chars/dots/dashes; a node whose id lost characters is declared once as
 `id["label"]` so the diagram still shows the real name. Distinct labels never
 share an id (collisions suffix `_2`) — merging two nodes would draw a lie.
+`classes` (label -> mermaid class name) adds one `class a,b,c name` line per
+class, ids resolved through the same table; the matching `classDef` colors are
+the renderer's job (the site injects them per theme), so the committed
+markdown carries no styling. `clusters` (box label -> member node labels)
+wraps members in labeled `subgraph` blocks, in order; cluster i is minted id
+`c<i>` (collision-suffixed like node ids) and classed `h<i>` so the renderer
+can tint the box to match its members' hue.
 
 **called by** `_architecture`, `_grouped_overview`, `_overview`  ·  **calls** `nid`
 
 ### `nid(label: str) -> str`
-`src/documate/docs.py:920`
+`src/documate/docs.py:931`
 
 The parse-safe id for `label`, minted on first sight and stable after.
 
 **called by** `_mermaid_lines`
 
 ### `_stem_edges(edges: list[tuple[str, str]]) -> list[tuple[str, str]]`
-`src/documate/docs.py:941`
+`src/documate/docs.py:974`
 
 Module edges collapsed to file stems for the overview diagram: a .c/.h pair
 is one node there, so its internal edge becomes a self-loop and its outgoing
@@ -395,7 +402,7 @@ edges become duplicates — drop both, the diagram shows modules, not files.
 **called by** `_architecture`, `_overview`
 
 ### `pinned_rev(ddir: Path) -> str | None`
-`src/documate/docs.py:952`
+`src/documate/docs.py:985`
 
 The hotspot pin recorded in the committed overview, if any.
 
@@ -404,7 +411,7 @@ function of the committed tree — new commits don't shift the counts under
 the diff. None when the overview is absent or carries no hotspot section.
 
 ### `_hotspot_lines(hs: Hotspots | None, href) -> list[str]`
-`src/documate/docs.py:966`
+`src/documate/docs.py:999`
 
 The overview's Hotspots section: the most-changed modules, then pairs that
 change together without an import edge between them. Mined evidence, labeled —
@@ -413,14 +420,14 @@ and the label line doubles as the pin `pinned_rev` reads back.
 **called by** `_grouped_overview`, `_overview`  ·  **calls** `href`
 
 ### `_overview(model: Model) -> str`
-`src/documate/docs.py:985`
+`src/documate/docs.py:1018`
 
 The docs/README.md: what the system is made of, drawn from the graph.
 
 **called by** `render`  ·  **calls** `_about`, `_hotspot_lines`, `_mermaid_lines`, `_slug`, `_start_here`, `_stem_edges`, `_tour`
 
 ### `_grouped_overview(model: Model, groups: dict[str, list[Page]]) -> str`
-`src/documate/docs.py:1011`
+`src/documate/docs.py:1044`
 
 The monorepo overview: directories, not a phone book of modules.
 
@@ -431,7 +438,7 @@ directory level and each row links that directory's own index page — a
 **called by** `render`  ·  **calls** `_dir`, `_hotspot_lines`, `_mermaid_lines`, `_slug`, `_start_here`, `_tail`, `_tour`
 
 ### `_group_index(d: str, pages: list[Page]) -> str`
-`src/documate/docs.py:1060`
+`src/documate/docs.py:1093`
 
 One directory's index page: the same subsystem table the small-repo overview
 has, scoped to this directory's modules.
@@ -439,7 +446,7 @@ has, scoped to this directory's modules.
 **called by** `render`  ·  **calls** `_about`, `_tail`
 
 ### `_page(p: Page, href=None, at: str='docs/architecture') -> str`
-`src/documate/docs.py:1071`
+`src/documate/docs.py:1104`
 
 One architecture page: module prose, edges, flow, then the per-symbol API.
 
@@ -452,7 +459,7 @@ the repo.
 **called by** `render`  ·  **calls** `_slug`, `href`
 
 ### `_architecture(model: Model, groups: dict[str, list[Page]], grouped: bool) -> str`
-`src/documate/docs.py:1140`
+`src/documate/docs.py:1173`
 
 docs/ARCHITECTURE.md — the whole system stitched onto one page.
 
@@ -467,7 +474,7 @@ ordered by their best-ranked page.
 **called by** `render`  ·  **calls** `_dir`, `_mermaid_lines`, `_slug`, `_stem_edges`, `_tail`, `_tour`
 
 ### `render(model: Model) -> dict[str, str]`
-`src/documate/docs.py:1217`
+`src/documate/docs.py:1250`
 
 Model -> {path-under-docs_dir: markdown}. Deterministic: same model, same bytes.
 
@@ -480,14 +487,14 @@ so a monorepo's front page and directory listing stay readable.
 **called by** `run`  ·  **calls** `_architecture`, `_dir`, `_group_index`, `_grouped_overview`, `_overview`, `_page`, `_slug`, `_tail`
 
 ### `href(m: str, _g: str=g) -> str`
-`src/documate/docs.py:1249`
+`src/documate/docs.py:1282`
 
 Link to a sibling module's page from inside this directory's folder.
 
 **called by** `_hotspot_lines`, `_page`, `_start_here`
 
 ### `_print_diff(rel: str, old: str, new: str) -> None`
-`src/documate/docs.py:1262`
+`src/documate/docs.py:1295`
 
 A compact colored unified diff of one regenerated page — what `--watch` shows
 so every doc change is visible the moment it happens, straight in the terminal.
@@ -495,7 +502,7 @@ so every doc change is visible the moment it happens, straight in the terminal.
 **called by** `run`
 
 ### `_agent_pointer(ctx: Context) -> list[str]`
-`src/documate/docs.py:1278`
+`src/documate/docs.py:1311`
 
 Maintain the agent-pointer block in AGENTS.md / CLAUDE.md — whichever already
 exist at the root (never created uninvited).
@@ -509,7 +516,7 @@ place; everything outside the markers is untouched. Returns the files changed.
 **called by** `run`
 
 ### `_rescue_docs_dir(ctx: Context, want: dict[str, str]) -> bool`
-`src/documate/docs.py:1319`
+`src/documate/docs.py:1352`
 
 Interactive way out of the clobber refusal: ask where generated docs
 should go instead, validate the answer (inside the repo, no foreign files
@@ -521,7 +528,7 @@ The caller re-runs so the page model rebuilds with the new docs_rel.
 **called by** `run`
 
 ### `run(ctx: Context, diff: bool=False, quiet: bool=False) -> int`
-`src/documate/docs.py:1372`
+`src/documate/docs.py:1405`
 
 Write the generated tier under docs_dir, pruning orphaned pages of ours.
 

@@ -907,13 +907,24 @@ def _about(p: Page) -> str:
     return ""
 
 
-def _mermaid_lines(edges: list[tuple[str, str]]) -> list[str]:
+def _mermaid_lines(
+    edges: list[tuple[str, str]],
+    classes: dict[str, str] | None = None,
+    clusters: dict[str, list[str]] | None = None,
+) -> list[str]:
     """Mermaid edge lines with parse-safe node ids. `(`/`[` open shape syntax in
     a bare mermaid id, so a Next.js route dir (`app/(doc)/[[...slug]]`) silently
     becomes a mislabeled shape or a parse error (zod dogfood). Ids keep word
     chars/dots/dashes; a node whose id lost characters is declared once as
     `id["label"]` so the diagram still shows the real name. Distinct labels never
-    share an id (collisions suffix `_2`) — merging two nodes would draw a lie."""
+    share an id (collisions suffix `_2`) — merging two nodes would draw a lie.
+    `classes` (label -> mermaid class name) adds one `class a,b,c name` line per
+    class, ids resolved through the same table; the matching `classDef` colors are
+    the renderer's job (the site injects them per theme), so the committed
+    markdown carries no styling. `clusters` (box label -> member node labels)
+    wraps members in labeled `subgraph` blocks, in order; cluster i is minted id
+    `c<i>` (collision-suffixed like node ids) and classed `h<i>` so the renderer
+    can tint the box to match its members' hue."""
     ids: dict[str, str] = {}
     taken: set[str] = set()
 
@@ -935,7 +946,29 @@ def _mermaid_lines(edges: list[tuple[str, str]]) -> list[str]:
         for label, i in sorted(ids.items())
         if i != label
     ]
-    return decls + lines
+    sub: list[str] = []
+    boxed: list[str] = []
+    for i, (label, members) in enumerate((clusters or {}).items()):
+        mids = sorted(ids[m] for m in members if m in ids)
+        if not mids:
+            continue
+        cid = f"c{i}"
+        while cid in taken:
+            cid += "_"
+        taken.add(cid)
+        sub.append('  subgraph {}["{}"]'.format(cid, label.replace('"', "'")))
+        sub += [f"    {m}" for m in mids]
+        sub.append("  end")
+        boxed.append(f"  class {cid} h{i}")
+    marks: dict[str, list[str]] = {}
+    for label, cls in (classes or {}).items():
+        if label in ids:
+            marks.setdefault(cls, []).append(ids[label])
+    tail = [
+        "  class {} {}".format(",".join(sorted(marks[cls])), cls)
+        for cls in sorted(marks)
+    ]
+    return decls + sub + lines + tail + boxed
 
 
 def _stem_edges(edges: list[tuple[str, str]]) -> list[tuple[str, str]]:
