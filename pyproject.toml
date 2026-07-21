@@ -1,6 +1,6 @@
 [project]
 name = "documate"
-version = "0.5.0"
+version = "0.6.0"
 description = "Tie docs to the code they describe, and yell when one moves without the other. Plugs into any repo."
 readme = "README.md"
 requires-python = ">=3.10"
