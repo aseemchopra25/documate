@@ -196,7 +196,7 @@ code{font-family:var(--mono)}
 .doc p a,.doc li a,.doc td a{text-decoration:underline;
   text-decoration-color:color-mix(in srgb,var(--accent) 30%,transparent);text-underline-offset:3px}
 .doc p a:hover,.doc li a:hover,.doc td a:hover{text-decoration-color:var(--accent)}
-.doc .cards a,.doc .chips a{text-decoration:none}
+.doc .rows a,.doc .chips a,.doc .feats a{text-decoration:none}
 p code,li code,.chips code,.xref code,dd code{background:var(--raise);
   padding:.1em .36em;border-radius:5px;font-size:.84em;color:var(--ink)}
 pre{background:var(--raise);border:1px solid var(--hairline);border-radius:12px;
@@ -215,31 +215,95 @@ pre{background:var(--raise);border:1px solid var(--hairline);border-radius:12px;
 .chips a{color:var(--accent-ink)}
 .stat{font-family:var(--mono);font-size:.85rem;color:var(--muted)}
 
-.graph-shell{border:1px solid var(--hairline);border-radius:16px;margin:1.5rem 0;background:
+.graph-wrap{position:relative;margin:1.5rem 0}
+.graph-shell{border:1px solid var(--hairline);border-radius:16px;margin:0;background:
   radial-gradient(circle at 1px 1px,var(--hairline) 1px,transparent 0) 0 0/22px 22px,var(--surface);
   overflow:auto;max-height:33rem;display:flex;justify-content:safe center;
   align-items:safe center;box-shadow:var(--shadow)}
+.graph-tools{position:absolute;top:.65rem;right:.65rem;display:flex;gap:.3rem;z-index:2}
+.graph-tools button{min-width:1.9rem;height:1.9rem;padding:0 .5rem;border:1px solid var(--line);
+  border-radius:8px;background:var(--surface);color:var(--muted);font-family:var(--sans);
+  font-size:.8rem;cursor:pointer;transition:color .15s,border-color .15s}
+.graph-tools button:hover{color:var(--accent-ink);border-color:var(--tint-line)}
+.row-cap{margin:1.7rem 0 .1rem;font-size:.7rem;font-weight:650;letter-spacing:.11em;
+  text-transform:uppercase;color:var(--faint)}
 pre.mermaid{margin:0;padding:1.8rem;background:none;border:0;border-radius:0;overflow:visible;
   font-size:.78rem;color:var(--faint)}
 
-.cards{list-style:none;padding:0;margin:1.1rem 0;display:grid;gap:.85rem;
-  grid-template-columns:repeat(auto-fill,minmax(15.5rem,1fr))}
-.cards a{display:block;height:100%;border:1px solid var(--hairline);border-radius:14px;padding:1rem 1.1rem;
-  background:var(--card);transition:border-color .16s,box-shadow .16s}
-.cards a:hover{border-color:var(--tint-line);box-shadow:var(--shadow)}
-.cards .name{display:block;font-family:var(--mono);font-size:.82rem;font-weight:600;
-  color:var(--strong);overflow-wrap:anywhere;transition:color .16s}
-.cards a:hover .name{color:var(--accent-ink)}
-.cards .about{display:block;font-size:.84rem;color:var(--muted);margin-top:.4rem;line-height:1.55}
+.rows{list-style:none;padding:0;margin:.3rem 0 1.6rem}
+.rows li{border-top:1px solid var(--hairline)}
+.rows li:first-child{border-top:0}
+.rows a{display:block;padding:.72rem .1rem}
+.row-name{display:inline-block;font-weight:600;color:var(--accent-ink);font-size:.94rem}
+.rows a:hover .row-name{text-decoration:underline;text-underline-offset:3px}
+.rows.mono .row-name{font-family:var(--mono);font-size:.85rem;overflow-wrap:anywhere}
+.row-desc{display:block;color:var(--muted);font-size:.87rem;margin-top:.14rem;line-height:1.55}
+.ref-dir{margin:1.8rem 0 .1rem;font-family:var(--mono);font-size:.76rem;font-weight:600;color:var(--faint)}
+.ref-dir code{background:none;border:0;padding:0;color:inherit}
 .arch{display:flex;flex-direction:column}
 .arch-sec{border-top:1px solid var(--hairline);padding:1.8rem 0 .5rem}
 .arch-sec h2{font-family:var(--mono);font-size:1.02rem;margin:0 0 .55rem}
 .arch-sec h2 a{color:var(--strong)}
 .arch-sec h2 a:hover{color:var(--accent-ink)}
 
-.hero{padding:.7rem 0 1.2rem}
-.hero h1{font-size:clamp(2.1rem,4.5vw,2.7rem);line-height:1.08;letter-spacing:-.025em;font-weight:700;margin:.4rem 0 .7rem}
-.lede{font-size:1.12rem;color:var(--muted);max-width:36rem;margin:.2rem 0 1.6rem;line-height:1.6;text-wrap:pretty}
+.hero-band{position:relative;overflow:hidden;border-bottom:1px solid var(--hairline);
+  background:linear-gradient(180deg,var(--tint),transparent 82%)}
+.hero-in{position:relative;max-width:var(--article);margin:0 auto;padding:2.7rem 0 2.1rem}
+.hero-in h1{font-size:1.9rem;font-weight:700;letter-spacing:-.022em;color:var(--strong);
+  margin:.3rem 0 .55rem;line-height:1.15;text-wrap:balance}
+.hero-in h1.mono{font-family:var(--mono);font-size:1.6rem;overflow-wrap:anywhere}
+.hero-in .lede{margin-bottom:.2rem}
+.hero-art{position:absolute;right:-3.5rem;top:-3.5rem;width:24rem;height:24rem;color:var(--accent);
+  opacity:.16;pointer-events:none}
+.metarow{display:flex;flex-wrap:wrap;gap:1.6rem;margin-top:1.15rem;font-size:.78rem;color:var(--muted)}
+.metarow code{background:none;border:0;padding:0;color:var(--muted);font-size:.95em}
+.hero-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:2.75rem;align-items:center}
+.hero-in:has(.hero-grid){max-width:74rem}
+@media (min-width:1100px){.hero-grid{grid-template-columns:minmax(0,1fr) minmax(0,27rem)}}
+.hero{padding:.6rem 0 .4rem;min-width:0}
+.hero h1{font-size:clamp(2.3rem,4.8vw,3.2rem);line-height:1.05;letter-spacing:-.028em;margin:.4rem 0 .7rem}
+.hero .lede{margin-bottom:1.4rem}
+.hero .stats{margin:1.9rem 0 0}
+.pill{display:inline-flex;align-items:center;gap:.45rem;padding:.36rem .85rem;border:1px solid var(--tint-line);
+  border-radius:99px;background:var(--tint);color:var(--accent-ink);font-size:.75rem;font-weight:650;
+  letter-spacing:.02em;margin-bottom:1.2rem}
+.cmdchip{display:flex;align-items:center;gap:.6rem;margin:.1rem 0 1.3rem;padding:.4rem .4rem .4rem .95rem;
+  border:1px solid var(--line);border-radius:12px;background:var(--surface);font-family:var(--mono);
+  font-size:.8rem;color:var(--ink);max-width:30rem}
+.cmdchip .c-cmd{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.cmdchip button{flex:none;border:1px solid var(--line);background:var(--raise);color:var(--muted);
+  border-radius:8px;font-family:var(--sans);font-size:.7rem;font-weight:600;padding:.34rem .7rem;
+  cursor:pointer;transition:color .15s,border-color .15s}
+.cmdchip button:hover{color:var(--accent-ink);border-color:var(--tint-line)}
+.cmdchip button.done{color:var(--ok);border-color:var(--ok)}
+.hero-side{min-width:0}
+.term{border:1px solid rgba(140,150,168,.25);border-radius:14px;background:#0d1117;
+  box-shadow:var(--shadow-lg);overflow:hidden}
+.t-head{display:flex;align-items:center;gap:.45rem;padding:.6rem .95rem;background:#151b23;
+  border-bottom:1px solid rgba(255,255,255,.06)}
+.t-dot{width:.68rem;height:.68rem;border-radius:99px}
+.t-title{margin-left:.45rem;font-family:var(--mono);font-size:.7rem;color:#8b95a3}
+.t-body{padding:1.05rem 1.2rem;font-family:var(--mono);font-size:.78rem;line-height:2;
+  color:#d7dde6;overflow-x:auto;scrollbar-width:thin;scrollbar-color:#2a3140 transparent}
+.t-line{white-space:pre;opacity:0;animation:tline .4s ease-out forwards;
+  animation-delay:calc(var(--i,0)*110ms)}
+@keyframes tline{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.t-p{color:#3fcf8e;margin-right:.6rem}
+.t-c{color:#7c8797}
+.t-cur{display:inline-block;width:.55em;height:1.05em;background:#d7dde6;vertical-align:text-bottom;
+  animation:blink 1.1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.feats{list-style:none;padding:0;margin:2.4rem 0 .4rem;display:grid;gap:.9rem;
+  grid-template-columns:repeat(auto-fit,minmax(16rem,1fr))}
+.feats a{display:block;height:100%;border:1px solid var(--hairline);border-radius:14px;
+  padding:1.1rem 1.15rem;background:var(--card);transition:border-color .16s,box-shadow .16s}
+.feats a:hover{border-color:var(--tint-line);box-shadow:var(--shadow)}
+.f-ico{display:grid;place-items:center;width:2.3rem;height:2.3rem;border-radius:10px;
+  background:var(--tint);color:var(--accent-ink);margin-bottom:.75rem}
+.f-ico svg{width:1.2rem;height:1.2rem}
+.f-name{display:block;font-weight:650;color:var(--strong);font-size:.94rem}
+.f-desc{display:block;color:var(--muted);font-size:.84rem;margin-top:.3rem;line-height:1.5}
+.lede{font-size:1.1rem;color:var(--muted);max-width:37rem;margin:.2rem 0 1.4rem;line-height:1.6;text-wrap:pretty}
 .stats{display:flex;flex-wrap:wrap;gap:2.4rem;margin:0 0 1.8rem}
 .stat-b b{display:block;font-size:1.45rem;font-weight:650;color:var(--strong);
   font-variant-numeric:tabular-nums;letter-spacing:-.02em;line-height:1.2}
@@ -260,8 +324,11 @@ pre.mermaid{margin:0;padding:1.8rem;background:none;border:0;border-radius:0;ove
 .api-entry{position:relative;padding:1.55rem 0 .9rem;border-top:1px solid var(--hairline)}
 .api-entry:first-child{border-top:0;padding-top:.4rem}
 .api-entry.method{margin-left:1.5rem}
-.api-entry h3{font-weight:600;margin:0}
-.api-entry h3 code{display:block;background:var(--raise);border:1px solid var(--hairline);border-radius:10px;
+.api-entry h3{font-weight:600;margin:0;display:flex;gap:.6rem;align-items:flex-start}
+.kindb{flex:none;display:inline-grid;place-items:center;width:1.4rem;height:1.4rem;margin-top:.5rem;
+  border-radius:7px;background:var(--tint);color:var(--accent-ink);font-family:var(--mono);
+  font-size:.68rem;font-weight:650}
+.api-entry h3 code{flex:1;display:block;background:var(--raise);border:1px solid var(--hairline);border-radius:10px;
   padding:.72rem .95rem;font-size:.85rem;line-height:1.55;color:var(--ink);overflow-x:auto;overflow-wrap:anywhere}
 .api-entry h3 code b{font-weight:650;color:var(--accent-ink)}
 .api-entry.method h3 code{font-size:.82rem}
@@ -321,6 +388,7 @@ ul{padding-left:1.2rem}
   .mid{grid-template-columns:1fr minmax(0,var(--article)) 1fr;column-gap:0}
   .toc-rail{display:none}
   .doc{padding-left:2rem;padding-right:2rem}
+  .hero-in{padding-left:2rem;padding-right:2rem}
 }
 @media (max-width:900px){
   .app{grid-template-columns:1fr}
@@ -328,9 +396,11 @@ ul{padding-left:1.2rem}
   .side.open{transform:none;box-shadow:var(--shadow-lg)}
   .menu-btn{display:grid}
   .doc{padding:2rem 1.3rem 5rem}
+  .hero-in{padding:2rem 1.3rem 1.7rem}
   .stats{gap:1.6rem}
 }
-@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}
+  .t-line{opacity:1}}
 """
 
 # The whole client: builds the sidebar from NAV (kept out of every page so a page's
@@ -362,19 +432,31 @@ if(tree){
     }
     tree.appendChild(gbox);
   }
-  if(NAV.groups.length)tree.appendChild(el("div","tree-cap","Reference"));
+  // reference tree, two levels: one cap per top-level directory, one collapsible
+  // group per remaining path — "modules" then "woz_uwb/src/aliro", never the full path
+  const tops=new Map();
   for(const [dir,items] of NAV.groups){
-    const g=el("div","group"),h=el("button","group-h");
-    h.innerHTML='<span class="chev">&#8964;</span>';h.appendChild(document.createTextNode(dir));
-    const box=el("div","items");
-    for(const [slug,label] of items){const a=el("a","item"+(slug===active?" on":""),label);a.href=slug+".html";box.appendChild(a)}
-    if(folded.has(dir))g.classList.add("collapsed");
-    h.onclick=()=>{
-      g.classList.toggle("collapsed");
-      g.classList.contains("collapsed")?folded.add(dir):folded.delete(dir);
-      store.set("dm-folded",[...folded].join("\n"));
-    };
-    g.appendChild(h);g.appendChild(box);tree.appendChild(g);
+    const top=dir==="/"?"/":dir.split("/")[0];
+    if(!tops.has(top))tops.set(top,[]);
+    tops.get(top).push([dir,dir==="/"?"":dir.split("/").slice(1).join("/"),items]);
+  }
+  for(const [top,list] of tops){
+    tree.appendChild(el("div","tree-cap",top==="/"?"repository":top));
+    for(const [dir,rest,items] of list){
+      const fill=box=>{for(const [slug,label] of items){
+        const a=el("a","item"+(slug===active?" on":""),label);a.href=slug+".html";box.appendChild(a)}};
+      if(!rest){const box=el("div","items");box.style.paddingLeft="0";fill(box);tree.appendChild(box);continue}
+      const g=el("div","group"),h=el("button","group-h");
+      h.innerHTML='<span class="chev">&#8964;</span>';h.appendChild(document.createTextNode(rest));
+      const box=el("div","items");fill(box);
+      if(folded.has(dir))g.classList.add("collapsed");
+      h.onclick=()=>{
+        g.classList.toggle("collapsed");
+        g.classList.contains("collapsed")?folded.add(dir):folded.delete(dir);
+        store.set("dm-folded",[...folded].join("\n"));
+      };
+      g.appendChild(h);g.appendChild(box);tree.appendChild(g);
+    }
   }
   const on=tree.querySelector(".on");
   if(on)tree.scrollTop=Math.max(0,on.offsetTop-tree.clientHeight/2);
@@ -395,6 +477,30 @@ const MTHEME={
     lineColor:"#8b93a0",secondaryColor:"#eff1f5",tertiaryColor:"#f7f8fa",fontSize:"13px"},
   dark:{background:"transparent",primaryColor:"#1a1d24",primaryBorderColor:"#3a4250",primaryTextColor:"#d8dde5",
     lineColor:"#5f6875",secondaryColor:"#14171d",tertiaryColor:"#121419",fontSize:"13px"}};
+// zoom controls per diagram: scale the rendered svg by setting its width, so the
+// scroll area tracks the zoom. Fit caps at 1:1 — node text is unreadable smaller.
+function graphTools(){
+  document.querySelectorAll(".graph-wrap").forEach(w=>{
+    const shell=w.querySelector(".graph-shell"),svg=shell&&shell.querySelector("svg");
+    if(!svg)return;
+    svg.style.width="";svg.style.height="auto";
+    const nat=svg.getBoundingClientRect().width;
+    let k=parseFloat(w.dataset.zoom||"1");
+    const apply=()=>{svg.style.width=nat*k+"px";w.dataset.zoom=k};
+    if(!w.querySelector(".graph-tools")){
+      const t=el("div","graph-tools");
+      [["−","Zoom out",()=>k=Math.max(.2,k/1.25)],
+       ["+","Zoom in",()=>k=Math.min(2.5,k*1.25)],
+       ["Fit","Fit to width",()=>k=Math.min(1,(shell.clientWidth-32)/nat)]
+      ].forEach(([txt,label,fn])=>{
+        const b=el("button",null,txt);b.type="button";b.title=label;b.setAttribute("aria-label",label);
+        b.onclick=()=>{fn();apply()};t.appendChild(b);
+      });
+      w.appendChild(t);
+    }
+    apply();
+  });
+}
 function drawMermaid(){
   if(!window.mermaid)return;
   const nodes=document.querySelectorAll("pre.mermaid");
@@ -403,11 +509,18 @@ function drawMermaid(){
     themeVariables:MTHEME[isDark()?"dark":"light"],flowchart:{useMaxWidth:false},
     fontFamily:'ui-monospace,SFMono-Regular,Menlo,monospace'});
     mermaid.run({querySelector:"pre.mermaid"}).then(()=>{
+      graphTools();
       document.querySelectorAll(".graph-shell").forEach(s=>{
         s.scrollLeft=(s.scrollWidth-s.clientWidth)/2;s.scrollTop=(s.scrollHeight-s.clientHeight)/2});
     })}catch(e){}
 }
 if(window.mermaid)drawMermaid();else addEventListener("load",drawMermaid);
+// the hero quick-start chip
+document.querySelectorAll(".js-copycmd").forEach(b=>{
+  b.onclick=()=>{navigator.clipboard&&navigator.clipboard.writeText(b.dataset.cmd).then(()=>{
+    b.textContent="Copied";b.classList.add("done");
+    setTimeout(()=>{b.textContent="Copy";b.classList.remove("done")},1600)});};
+});
 // copy buttons: each code block gets a wrapper so the button stays put while the
 // code scrolls under it
 document.querySelectorAll(".doc pre:not(.mermaid)").forEach(p=>{
@@ -666,10 +779,33 @@ def _markdown(text: str) -> str:
     return "\n".join(out)
 
 
+# Reader-priority buckets for the guide list, matched against slug + title: what a
+# newcomer needs first (setup, bring-up), then operating the thing (hardware,
+# validation, pitfalls), then help, then the deep dives, then maintainer process.
+_GUIDE_RANKS = (
+    ("start", "install", "setup", "quick", "intro", "getting", "bring"),
+    ("hardware", "validation", "checklist", "gotcha", "bench", "wiring"),
+    ("troubleshoot", "faq", "issue", "debug"),
+    (),  # everything else
+    ("releas", "contribut", "changelog"),
+)
+_GUIDE_CAPS = {0: "Start here", 1: "Hardware", 2: "Troubleshooting", 3: "Deep dives", 4: "Project"}
+
+
+def _guide_rank(g: Guide) -> int:
+    """The guide's priority bucket — index into _GUIDE_RANKS, 3 when nothing hits."""
+    hay = f"{g.slug.rsplit('.', 1)[-1]} {g.title}".lower()
+    for i, keys in enumerate(_GUIDE_RANKS):
+        if keys and any(k in hay for k in keys):
+            return i
+    return 3
+
+
 def _guides(ctx: Context) -> list[Guide]:
     """Every authored page under docs_dir — any *.md without the generated stamp, the
     same rule the anchor scanner uses — so the site carries the hand-written why
-    alongside the generated what."""
+    alongside the generated what. Ordered for a reader (setup first, process last),
+    stable within a bucket, and the sidebar/search follow the same order."""
     found: list[Guide] = []
     ddir = ctx.config.docs_dir
     for md in sorted(ddir.rglob("*.md")):
@@ -684,6 +820,7 @@ def _guides(ctx: Context) -> list[Guide]:
             (ln[2:].strip() for ln in text.splitlines() if ln.startswith("# ")), rel
         )
         found.append(Guide(rel.replace("/", ".").removesuffix(".md"), title, text, rel))
+    found.sort(key=_guide_rank)
     return found
 
 
@@ -774,8 +911,8 @@ def _mermaid(kind: str, edges) -> str:
     """A client-rendered flowchart: the mermaid text itself is the offline fallback."""
     rows = "\n".join(html.escape(ln) for ln in _mermaid_lines(list(edges)))
     return (
-        '<div class="graph-shell">'
-        f'<pre class="mermaid">flowchart {kind}\n{rows}</pre></div>'
+        '<figure class="graph-wrap"><div class="graph-shell">'
+        f'<pre class="mermaid">flowchart {kind}\n{rows}</pre></div></figure>'
     )
 
 
@@ -839,13 +976,21 @@ def _crumb(*parts: str) -> str:
 
 
 def _layout(
-    model: Model, title: str, active: str, crumb: str, body: str, body_class: str = ""
+    model: Model,
+    title: str,
+    active: str,
+    crumb: str,
+    body: str,
+    body_class: str = "",
+    hero: str = "",
 ) -> str:
     """Wrap a page body in the shared shell: sidebar (brand + coverage, nav filled by
-    nav.js), sticky top bar (breadcrumb + search + theme), the reading column, and the
-    search palette. `active` (the page's slug) marks its nav link; everything else is
-    one shared nav.js and style.css, so a page's size never grows with the page count."""
+    nav.js), sticky top bar (breadcrumb + search + theme), an optional full-width hero
+    band, the reading column, and the search palette. `active` (the page's slug) marks
+    its nav link; everything else is one shared nav.js and style.css, so a page's size
+    never grows with the page count."""
     cov = model.coverage
+    band = f'<header class="hero-band"><div class="hero-in">{hero}</div></header>' if hero else ""
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -873,6 +1018,7 @@ def _layout(
 <button class="icon-btn js-search" aria-label="Search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg></button>
 <button class="icon-btn" id="themeBtn" aria-label="Toggle theme"><svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg><svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2m20 0h-2M5 5 3.5 3.5M20.5 20.5 19 19M19 5l1.5-1.5M3.5 20.5 5 19"/></svg></button>
 </header>
+{band}
 <div class="mid">
 <main class="doc {body_class}">
 {body}
@@ -934,16 +1080,146 @@ def _split_intro(text: str) -> tuple[str, str]:
     return " ".join(lede), "\n".join(lines[i:])
 
 
-def _overview(model: Model, guides=()) -> str:
-    """index.html — the landing page: a hero (name, lede, stat badges, calls to action),
-    the Getting started guide inlined when the repo ships one, then the subsystem map and
-    any remaining guides. Still the same model the markdown overview is built from."""
+def _plain(text: str) -> str:
+    """Markdown spans flattened to plain text — for one-line descriptions."""
+    return _LINK_RE.sub(r"\1", _BOLD_RE.sub(r"\1", text))
+
+
+def _clip(text: str, limit: int) -> str:
+    """Text cut at a word boundary near `limit`, with an ellipsis when clipped."""
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rsplit(" ", 1)[0] + "…"
+
+
+def _repo_lede(root) -> str:
+    """The repo README's opening paragraph, as the landing-page lede when no
+    getting-started guide provides one. Headings, badges, images, HTML, lists and
+    fenced code are skipped; empty when nothing usable is found."""
+    try:
+        text = (root / "README.md").read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return ""
+    for chunk in re.split(r"\n\s*\n", text):
+        s = " ".join(chunk.split())
+        if not s or s.startswith(("#", "<", "!", "[!", "```", "|", ">", "-", "*")):
+            continue
+        s = _plain(s)
+        if len(s) > 240:  # keep whole sentences when the paragraph runs long
+            head, _, _ = s[:240].rpartition(". ")
+            s = head + "." if head else _clip(s, 240)
+        return s
+    return ""
+
+
+def _guide_desc(text: str) -> str:
+    """A guide's first plain paragraph, clipped to one row-description line.
+    Headings, anchors, lists, tables and fences are skipped — a guide that opens
+    with `## Abstract` describes itself by the prose after it, not the heading."""
+    for chunk in re.split(r"\n\s*\n", text):
+        s = " ".join(chunk.split())
+        if not s or s.startswith(("#", "<", "!", "[!", "```", "|", ">", "-", "*")):
+            continue
+        return _clip(_plain(s), 170)
+    return ""
+
+
+_FENCE_RE = re.compile(r"^```(\w+)\s*$")
+_SHELL_LANGS = ("bash", "sh", "shell", "zsh", "console")
+
+
+def _shell_block(root) -> list[str]:
+    """The README's first shell-fenced block, as terminal lines for the landing
+    hero — the project's own quick start, never invented copy. Empty when the
+    README carries no such block."""
+    try:
+        lines = (root / "README.md").read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return []
+    i = 0
+    while i < len(lines):
+        m = _FENCE_RE.match(lines[i].strip())
+        if m and m.group(1).lower() in _SHELL_LANGS:
+            block = []
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                block.append(lines[i].rstrip())
+                i += 1
+            block = [b for b in block if b.strip()]
+            if block:
+                return block[:12]
+        i += 1
+    return []
+
+
+def _rows(items) -> str:
+    """An Apple-docs style topic list: linked name + one-line description per row.
+    `items` yields (href, name, description-html-or-empty, mono?) tuples."""
+    out = []
+    for href, name, desc, mono in items:
+        d = f'<span class="row-desc">{desc}</span>' if desc else ""
+        out.append(
+            f'<li><a href="{href}"><span class="row-name">{name}</span>{d}</a></li>'
+        )
+    mono_all = all(m for *_, m in items) if items else False
+    cls = "rows mono" if mono_all else "rows"
+    return f'<ul class="{cls}">\n' + "\n".join(out) + "\n</ul>"
+
+
+_FEAT_ICONS = {
+    "arch": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3 2 8.5 12 14l10-5.5L12 3z"/><path d="M2 15.5 12 21l10-5.5"/></svg>',
+    "chip": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M9 3v4M15 3v4M9 17v4M15 17v4M3 9h4M3 15h4M17 9h4M17 15h4"/></svg>',
+    "help": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 3v5M12 16v5M3 12h5M16 12h5"/></svg>',
+    "book": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M20 18v3H6.5A2.5 2.5 0 0 1 4 18.5"/></svg>',
+}
+
+
+def _feats(model: Model, guides) -> str:
+    """The explore-card grid under the hero: the fixed destinations (architecture,
+    reference) plus the repo's hardware and troubleshooting guides when it has
+    them. Card copy is the guide's own title — nothing invented."""
+    cards = [
+        (
+            "architecture.html",
+            "Architecture",
+            "Every subsystem on one page, in reading order.",
+            "arch",
+        )
+    ]
+    hw = next((g for g in guides if _guide_rank(g) == 1), None)
+    if hw:
+        cards.append((f"{hw.slug}.html", "Hardware", _clip(hw.title, 90), "chip"))
+    ts = next((g for g in guides if _guide_rank(g) == 2), None)
+    if ts:
+        cards.append((f"{ts.slug}.html", "Troubleshooting", _clip(ts.title, 90), "help"))
+    cards.append(
+        (
+            "#subsystems",
+            "Reference",
+            f"All {len(model.pages)} modules, grouped by directory.",
+            "book",
+        )
+    )
+    lis = "\n".join(
+        f'<li><a href="{href}"><span class="f-ico">{_FEAT_ICONS[ico]}</span>'
+        f'<span class="f-name">{html.escape(name)}</span>'
+        f'<span class="f-desc">{html.escape(desc)}</span></a></li>'
+        for href, name, desc, ico in cards
+    )
+    return f'<ul class="feats">\n{lis}\n</ul>'
+
+
+def _overview(model: Model, guides=(), lede: str = "", cmds: list[str] = ()) -> str:
+    """index.html — the landing page: a split product hero (name, lede, copyable
+    quick-start command, and the README's own setup session in a terminal window),
+    explore cards, the Getting started guide inlined when the repo ships one, then
+    the guides and the per-directory reference as described topic rows — a front
+    page a newcomer can read, not a wall of file paths."""
     cov = model.coverage
     featured = _featured(guides)
     others = [g for g in guides if g is not featured]
-    lede, rest = _split_intro(featured.text) if featured else ("", "")
-    if not lede:
-        lede = f"Generated documentation for {model.root_name}."
+    g_lede, rest = _split_intro(featured.text) if featured else ("", "")
+    lede = g_lede or lede or f"Generated documentation for {model.root_name}."
 
     stats = "".join(
         f'<div class="stat-b"><b>{v}</b><span>{label}</span></div>'
@@ -953,29 +1229,104 @@ def _overview(model: Model, guides=()) -> str:
             (cov["documented"], "symbols"),
         )
     )
+    starter = featured or next((g for g in guides if _guide_rank(g) == 0), None)
     href, cta = (
-        (f"{featured.slug}.html", "Get started")
-        if featured
-        else ("#subsystems", "Browse subsystems")
+        (f"{starter.slug}.html", "Get started")
+        if starter
+        else ("#subsystems", "Browse the reference")
     )
-    parts = [
-        '<section class="hero">',
-        '<div class="eyebrow">documentation</div>',
-        f"<h1>{html.escape(model.root_name)}</h1>",
-        f'<p class="lede">{_inline(lede)}</p>',
-        f'<div class="stats">{stats}</div>',
-        f'<div class="cta"><a class="btn btn-primary" href="{href}">{cta}</a>'
-        f'<a class="btn" href="architecture.html">Architecture</a></div>',
-        "</section>",
-    ]
+    art = (
+        '<svg class="hero-art" viewBox="0 0 400 400" aria-hidden="true" '
+        'fill="none" stroke="currentColor">'
+        + "".join(
+            f'<circle cx="330" cy="70" r="{r}" stroke-width="1"/>'
+            for r in (40, 95, 155, 220, 290)
+        )
+        + '<circle cx="330" cy="70" r="4" fill="currentColor" stroke="none"/></svg>'
+    )
+    term, chip = "", ""
+    if cmds:
+        tl = []
+        for n, c in enumerate(cmds):
+            s = c.strip()
+            if s.startswith("#"):
+                tl.append(f'<div class="t-line t-c" style="--i:{n}">{html.escape(s)}</div>')
+            else:
+                cmd, mark, cmt = s.partition("  #")
+                tail = f'<span class="t-c">  #{html.escape(cmt)}</span>' if mark else ""
+                tl.append(
+                    f'<div class="t-line" style="--i:{n}"><span class="t-p">$</span>'
+                    f"{html.escape(cmd.rstrip())}{tail}</div>"
+                )
+        tl.append(
+            f'<div class="t-line" style="--i:{len(cmds)}"><span class="t-p">$</span>'
+            '<span class="t-cur"></span></div>'
+        )
+        term = (
+            '<div class="term"><div class="t-head">'
+            '<span class="t-dot" style="background:#ff5f57"></span>'
+            '<span class="t-dot" style="background:#febc2e"></span>'
+            '<span class="t-dot" style="background:#28c840"></span>'
+            f'<span class="t-title">{html.escape(model.root_name)} · zsh</span></div>'
+            f'<div class="t-body">{"".join(tl)}</div></div>'
+        )
+        first = next(
+            (c.strip() for c in cmds if c.strip() and not c.strip().startswith("#")), ""
+        ).partition("  #")[0].strip()
+        if first:
+            chip = (
+                f'<div class="cmdchip"><span class="t-p">$</span>'
+                f'<span class="c-cmd">{html.escape(first)}</span>'
+                f'<button type="button" class="js-copycmd" data-cmd="{html.escape(first)}">'
+                "Copy</button></div>"
+            )
+    hero = (
+        art
+        + '<div class="hero-grid"><section class="hero">'
+        + '<div class="pill">Developer documentation</div>'
+        + f"<h1>{html.escape(model.root_name)}</h1>"
+        + f'<p class="lede">{_inline(lede)}</p>'
+        + chip
+        + f'<div class="cta"><a class="btn btn-primary" href="{href}">{cta}</a>'
+        + '<a class="btn" href="architecture.html">Architecture</a></div>'
+        + f'<div class="stats">{stats}</div>'
+        + "</section>"
+        + (f'<div class="hero-side">{term}</div>' if term else "")
+        + "</div>"
+    )
+    parts = [_feats(model, guides)]
     if featured and rest.strip():
         parts.append(
             '<div class="section-h"><h2>Getting started</h2><span class="rule"></span></div>'
         )
         parts.append(_markdown(rest))
 
+    if others:
+        parts.append(
+            '<div class="section-h"><h2>Guides</h2><span class="rule"></span></div>'
+        )
+        buckets: dict[int, list[Guide]] = {}
+        for g in others:
+            buckets.setdefault(_guide_rank(g), []).append(g)
+        for r in sorted(buckets):
+            if len(buckets) > 1:
+                parts.append(f'<div class="row-cap">{_GUIDE_CAPS[r]}</div>')
+            parts.append(
+                _rows(
+                    [
+                        (
+                            f"{g.slug}.html",
+                            html.escape(g.title),
+                            _inline(_guide_desc(g.text)),
+                            False,
+                        )
+                        for g in buckets[r]
+                    ]
+                )
+            )
+
     parts.append(
-        '<div class="section-h" id="subsystems"><h2>Subsystems</h2><span class="rule"></span></div>'
+        '<div class="section-h" id="subsystems"><h2>Reference</h2><span class="rule"></span></div>'
     )
     if model.module_edges and len(model.module_edges) <= _MAP_CAP:
         from pathlib import Path
@@ -984,24 +1335,32 @@ def _overview(model: Model, guides=()) -> str:
             (Path(a).stem, Path(b).stem) for a, b in model.module_edges[:_EDGE_CAP]
         ]
         parts.append(_mermaid("LR", stems))
-    cards = "\n".join(
-        f'<li><a href="{p.slug}.html"><span class="name">{html.escape(p.rel)}</span>'
-        f'<span class="about">{_inline(p.summary)}</span></a></li>'
-        for p in model.pages
-    )
-    parts.append(f'<ul class="cards">\n{cards}\n</ul>')
-
-    if others:
+    bydir: dict[str, list[Page]] = {}
+    for p in model.pages:
+        bydir.setdefault(os.path.dirname(p.rel) or "/", []).append(p)
+    for d, ps in bydir.items():
+        label = "repository root" if d == "/" else d
+        parts.append(f'<div class="ref-dir"><code>{html.escape(label)}</code></div>')
         parts.append(
-            '<div class="section-h"><h2>Guides</h2><span class="rule"></span></div>'
+            _rows(
+                [
+                    (
+                        f"{p.slug}.html",
+                        html.escape(os.path.basename(p.rel)),
+                        _inline(p.summary) if p.summary else "",
+                        True,
+                    )
+                    for p in ps
+                ]
+            )
         )
-        gcards = "\n".join(
-            f'<li><a href="{g.slug}.html"><span class="name">{html.escape(g.title)}</span></a></li>'
-            for g in others
-        )
-        parts.append(f'<ul class="cards">\n{gcards}\n</ul>')
     return _layout(
-        model, model.root_name, "index", _crumb("Overview"), "\n".join(parts)
+        model,
+        model.root_name,
+        "index",
+        _crumb("Overview"),
+        "\n".join(parts),
+        hero=hero,
     )
 
 
@@ -1011,13 +1370,14 @@ def _architecture(model: Model) -> str:
     order, _ = _tour(model.pages, model.module_edges)
     rank = {r: i for i, r in enumerate(order)}
     pages = sorted(model.pages, key=lambda p: rank.get(p.rel, len(rank)))
-    parts = [
-        f'<div class="eyebrow">{html.escape(model.root_name)}</div>',
-        "<h1>Architecture</h1>",
-        "<p>Every subsystem on one page, in reading order: entry points (nothing "
-        "imports them) first, then the machinery they drive. Each heading links to the "
-        "full per-module reference.</p>",
-    ]
+    hero = (
+        f'<div class="eyebrow">{html.escape(model.root_name)}</div>'
+        "<h1>Architecture</h1>"
+        '<p class="lede">Every subsystem on one page, in reading order: entry points '
+        "(nothing imports them) first, then the machinery they drive. Each heading "
+        "links to the full per-module reference.</p>"
+    )
+    parts = []
     if model.module_edges:
         from pathlib import Path
 
@@ -1060,27 +1420,51 @@ def _architecture(model: Model) -> str:
         "architecture",
         crumb,
         "\n".join(parts),
+        hero=hero,
     )
 
 
 def _guide(model: Model, g: Guide) -> str:
-    """One authored page, converted from its markdown, in the same shell as the rest."""
+    """One authored page: its title in the hero band, its markdown below (minus the
+    title line the band already carries)."""
+    lines = g.text.splitlines()
+    for i, ln in enumerate(lines):
+        if ln.lstrip().startswith("# "):
+            lines = lines[:i] + lines[i + 1 :]
+            break
+        if ln.strip():
+            break
+    hero = f'<div class="eyebrow">Guide</div><h1>{html.escape(g.title)}</h1>'
     return _layout(
-        model, g.title, g.slug, _crumb(g.title), _markdown(g.text), "reading"
+        model,
+        g.title,
+        g.slug,
+        _crumb(g.title),
+        _markdown("\n".join(lines)),
+        "reading",
+        hero=hero,
     )
 
 
 def _page(model: Model, p: Page) -> str:
-    """One subsystem page: module prose, edge chips, flow diagram, per-symbol API."""
-    where = os.path.dirname(p.rel)
-    eyebrow = (
-        f"module &middot; <code>{html.escape(where)}/</code>" if where else "module"
+    """One subsystem page: hero band (name, summary, path), Overview prose, edge
+    chips, flow diagram, then the per-symbol API with kind badges."""
+    documented = [s for s in p.symbols if s.doc]
+    meta = [f"<span><code>{html.escape(p.rel)}</code></span>"]
+    if documented:
+        meta.append(f"<span>{len(documented)} documented symbols</span>")
+    lede = p.summary.rstrip(" ,;:")
+    if lede and not lede.endswith((".", "?", "!", "…")):
+        lede += "…"  # the model clips summaries mid-sentence; make that visible
+    hero = (
+        '<div class="eyebrow">Module</div>'
+        f'<h1 class="mono">{html.escape(os.path.basename(p.rel))}</h1>'
+        + (f'<p class="lede">{_inline(lede)}</p>' if lede else "")
+        + f'<div class="metarow">{"".join(meta)}</div>'
     )
-    parts = [
-        f'<div class="eyebrow">{eyebrow}</div>',
-        f'<h1 class="mono">{html.escape(os.path.basename(p.rel))}</h1>',
-    ]
+    parts = []
     if p.module_doc:
+        parts.append("<h2>Overview</h2>")
         parts.append(_prose(p.module_doc))
 
     chips = []
@@ -1093,7 +1477,6 @@ def _page(model: Model, p: Page) -> str:
     if p.flow:
         parts.append(_mermaid("TD", p.flow))
 
-    documented = [s for s in p.symbols if s.doc]
     if documented:
         parts.append(
             '<div class="section-h"><h2>API</h2><span class="rule"></span></div>'
@@ -1105,9 +1488,12 @@ def _page(model: Model, p: Page) -> str:
         sig = html.escape(s.signature or s.name)
         nm = html.escape(s.name)
         sig = re.sub(rf"\b{re.escape(nm)}\b", f"<b>{nm}</b>", sig, count=1)
+        kind = s.kind.lower()
+        letter = "#" if kind == "macro" else (kind[:1].upper() or "?")
+        badge = f'<span class="kindb" title="{html.escape(kind)}">{letter}</span>'
         entry = [
             f'<section class="api-entry{" method" if s.owner else ""}" id="{html.escape(s.name)}">',
-            f"<h3><code>{sig}</code></h3>",
+            f"<h3>{badge}<code>{sig}</code></h3>",
             f'<div class="src">{html.escape(p.rel)}:{s.line}</div>',
             _prose(s.doc),
         ]
@@ -1137,15 +1523,19 @@ def _page(model: Model, p: Page) -> str:
             f"<p>{names}</p></details>"
         )
     crumb = _crumb(os.path.dirname(p.rel) or "/", os.path.basename(p.rel))
-    return _layout(model, p.rel, p.slug, crumb, "\n".join(parts))
+    return _layout(model, p.rel, p.slug, crumb, "\n".join(parts), hero=hero)
 
 
-def render(model: Model, guides: list[Guide] = ()) -> dict[str, str]:
+def render(
+    model: Model, guides: list[Guide] = (), lede: str = "", cmds: list[str] = ()
+) -> dict[str, str]:
     """Model (+ authored guides) -> {filename: html/css/js}. Deterministic, flat:
     index (overview) + architecture + one page per subsystem + one per guide + the
-    shared stylesheet and script — the whole site, ready for any static host."""
+    shared stylesheet and script — the whole site, ready for any static host.
+    `lede` is the landing-page fallback tagline and `cmds` its hero terminal
+    session, both mined from the repo README."""
     out = {
-        "index.html": _overview(model, guides),
+        "index.html": _overview(model, guides, lede, cmds),
         "architecture.html": _architecture(model),
         "style.css": _CSS,
         "nav.js": _nav_js(model, guides),
@@ -1175,7 +1565,7 @@ def run(ctx: Context) -> int:
             "(or add a git remote, for links to repo files)"
         )
         return 1
-    want = render(model, guides)
+    want = render(model, guides, _repo_lede(ctx.root), _shell_block(ctx.root))
     sdir = ctx.config.site_dir
     sdir.mkdir(parents=True, exist_ok=True)
     (sdir / ".nojekyll").write_text("")
