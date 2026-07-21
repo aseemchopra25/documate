@@ -32,6 +32,8 @@ jobs:
           python-version: "3.12"
       - run: pip install -e .
       - run: documate --html .
+      - name: hygiene gate — nothing personal in the published site
+        run: bash scripts/scan_hygiene.sh site
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

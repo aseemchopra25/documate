@@ -7,6 +7,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -27,3 +30,28 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: dogfood — the gate on our own docs
         run: documate --check --base "${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD' }}"
+
+  # Secret scan over the full history — a credential in an old commit is just
+  # as public as one at the tip. `make secrets` runs the same scan locally.
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Personal-info deny-list. The patterns live in the PII_PATTERNS repo secret
+  # (one extended regex per line), never in the repo — a committed deny-list
+  # would disclose the very strings it guards. The script prints file paths
+  # only and warns (without failing) when the secret is absent, e.g. on forks.
+  pii:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: personal-info deny-list
+        env:
+          PII_PATTERNS: ${{ secrets.PII_PATTERNS }}
+        run: bash scripts/scan_pii.sh .

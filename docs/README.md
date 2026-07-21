@@ -1,7 +1,7 @@
 <!-- generated documentation — edit the source, not this file -->
 # documate
 
-**18 subsystems · 278/278 symbols documented (100%)**
+**20 subsystems · 278/278 symbols documented (100%)**
 
 **Start here:** [`src/documate/cli.py`](architecture/src.documate.cli.md) — the door into the codebase (nothing else imports it).
 
@@ -64,6 +64,8 @@ flowchart LR
 | subsystem | about |
 |---|---|
 | [`scripts/coverage_report.py`](architecture/scripts.coverage_report.md) | coverage_report.py — render coverage.py JSON as a colored per-file table. |
+| [`scripts/scan_hygiene.sh`](architecture/scripts.scan_hygiene.sh.md) | Hygiene gate for the built site: refuse to publish pages that leak local |
+| [`scripts/scan_pii.sh`](architecture/scripts.scan_pii.sh.md) | Personal-info deny-list scan. The patterns arrive via $PII_PATTERNS (one |
 | [`src/documate/__init__.py`](architecture/src.documate.__init__.md) | documate — generate docs from your code and keep them honest. |
 | [`src/documate/anchors.py`](architecture/src.documate.anchors.md) | anchors.py — scan authored docs for `documents:` anchors and validate them. |
 | [`src/documate/briefs.py`](architecture/src.documate.briefs.md) | briefs.py — O(diff) work orders for a prose-writing model (or a human). |

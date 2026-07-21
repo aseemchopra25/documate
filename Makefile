@@ -73,7 +73,7 @@ FLAGS := $(if $(BASE),--base $(BASE))
 .PHONY: help venv hooks doctor \
         docs check site stats watch ai \
         test ci coverage \
-        lint fmt fmt-check \
+        lint fmt fmt-check secrets pii hygiene \
         build verify release \
         clean clean-graph distclean
 
@@ -121,6 +121,8 @@ doctor:
 	@printf '    %-14s %s\n' "uv" "$$(uv --version 2>/dev/null || echo 'absent (optional — venv falls back to pip)')"
 	@printf '    %-14s %s\n' "git" "$$(git --version 2>/dev/null || echo 'MISSING')"
 	@printf '    %-14s %s\n' "claude" "$$(command -v claude >/dev/null 2>&1 && echo present || echo 'absent (only --ai needs it)')"
+	@printf '    %-14s %s\n' "gitleaks" "$$(command -v gitleaks >/dev/null 2>&1 && echo present || echo 'absent (make secrets needs it; CI runs it regardless)')"
+	@printf '    %-14s %s\n' "pii-patterns" "$$([ -f "$$HOME/.config/documate/pii-patterns" ] && echo present || echo 'absent — make pii scans nothing locally')"
 	@printf '\n  dev venv\n'
 	@if [ -x "$(PY)" ]; then \
 	   printf '    %-14s %s\n' "python" "$$("$(PY)" -V 2>&1)"; \
@@ -184,6 +186,11 @@ ci: $(STAMP)
 	@cd "$(REPO_ROOT)" && "$(PY)" -m unittest discover -s tests -v
 	@printf '\n==> dogfood: the gate on our own docs\n'
 	@"$(DOCUMATE)" "$(REPO_ROOT)" --check $(FLAGS)
+	@printf '\n==> scans: secrets, then the personal-info deny-list\n'
+	@if command -v gitleaks >/dev/null 2>&1; then \
+	   gitleaks detect --source "$(REPO_ROOT)" --redact --no-banner; \
+	 else printf '    gitleaks absent — secret scan SKIPPED here; CI still runs it\n'; fi
+	@$(MAKE) pii
 	@printf '\n    CI subset passed — matrix aside, this is the whole gate.\n'
 
 ## coverage: line coverage of src/documate → colored table + an HTML report
@@ -212,6 +219,31 @@ fmt: $(STAMP)
 ## fmt-check: fail if anything is unformatted — writes nothing
 fmt-check: $(STAMP)
 	@"$(RUFF)" format --check $(LINT_PATHS)
+
+## secrets: gitleaks over the repo and its full history
+##   Same scan CI's `secrets` job runs. Needs the gitleaks binary locally
+##   (brew install gitleaks); fails loud with a hint when it's absent.
+secrets:
+	@command -v gitleaks >/dev/null 2>&1 || { \
+	  printf '    gitleaks not on PATH — brew install gitleaks (CI still runs the scan)\n' >&2; exit 1; }
+	@gitleaks detect --source "$(REPO_ROOT)" --redact --no-banner
+
+## pii: personal-info deny-list over the repo — patterns live OUTSIDE the repo
+##   Reads ~/.config/documate/pii-patterns (one extended regex per line; never
+##   committed — a public deny-list would disclose what it guards). CI feeds
+##   the same script its PII_PATTERNS secret. Prints file paths, never matches.
+pii:
+	@if [ -f "$$HOME/.config/documate/pii-patterns" ]; then \
+	   PII_PATTERNS="$$(cat "$$HOME/.config/documate/pii-patterns")" \
+	     bash "$(REPO_ROOT)/scripts/scan_pii.sh" "$(REPO_ROOT)"; \
+	 else \
+	   bash "$(REPO_ROOT)/scripts/scan_pii.sh" "$(REPO_ROOT)"; \
+	 fi
+
+## hygiene: build the site, then gate it — no local paths, emails or IP-like strings
+##   Same script pages.yml runs before publishing to GitHub Pages.
+hygiene: site
+	@bash "$(REPO_ROOT)/scripts/scan_hygiene.sh" "$(REPO_ROOT)/site"
 
 ##@ Release  (see RELEASING.md — this is the mechanical half)
 ## build: clear dist/ and build the wheel + sdist
