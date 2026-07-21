@@ -35,4 +35,4 @@ fi
 [ -z "$base" ] && base="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || echo main)"
 
 documate --base "$base"
-git add -- "$docs_dir/README.md" "$docs_dir/architecture" 2>/dev/null || true
+git add -- "$docs_dir/README.md" "$docs_dir/ARCHITECTURE.md" "$docs_dir/architecture" 2>/dev/null || true
