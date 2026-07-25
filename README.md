@@ -89,6 +89,10 @@ documate --check --ai         # surgical mode: repair exactly what the gate flag
   `@brief`/`@param`/`@return`). It is idempotent, so capped runs compose.
 - **No API keys, no SDK.** It drives the `claude` CLI you already have.
 
+Drafts wrap to `doc_width` (100 columns by default) so they land inside your format
+gate. `documate --rewrap-docs` reflows doc comments already in the source to the same
+width — no model, no tokens; comments that already fit come out byte-identical.
+
 `documate --list-undocumented` prints the missing-docs map as JSON for your own agents.
 
 ## Authored pages
@@ -112,7 +116,8 @@ documents:
   "docs_dir": "docs",
   "site_dir": "site",
   "skip_dirs": ["/generated/"],
-  "default_base": "main"
+  "default_base": "main",
+  "doc_width": 100
 }
 ```
 

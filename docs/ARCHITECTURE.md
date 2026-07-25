@@ -13,6 +13,7 @@ flowchart LR
   briefs --> extract
   briefs --> prose
   briefs --> resolve
+  briefs --> ui
   check --> anchors
   check --> briefs
   check --> core
@@ -25,6 +26,7 @@ flowchart LR
   cli --> core
   cli --> docs
   cli --> prose
+  cli --> rewrap
   cli --> site
   cli --> stats
   cli --> ui
@@ -47,6 +49,12 @@ flowchart LR
   prose --> ui
   prose --> undo
   resolve --> core
+  rewrap --> core
+  rewrap --> docs
+  rewrap --> extract
+  rewrap --> prose
+  rewrap --> ui
+  rewrap --> undo
   site --> core
   site --> docs
   site --> ui
@@ -79,11 +87,12 @@ binary at any repo or monorepo sub-tree, --base picks the drift ref, --full
 re-indexes from scratch, --html adds the static site, --briefs emits work
 orders whenever the gate runs. --only/--dry-run/--budget aim, preview, and
 cap an --ai run; --undo reverts the last one from its recorded manifest;
+--rewrap-docs reflows over-long doc comments to doc_width with no model at all;
 --list-undocumented prints the missing-docs map as JSON. One Context per
 invocation, no import-time globals. `--watch --ai` is refused: a model call
 on every save is a token faucet — run --ai as a deliberate one-shot.
 
-**depends on** [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/config.py`](architecture/src.documate.config.md), [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/site.py`](architecture/src.documate.site.md), [`src/documate/stats.py`](architecture/src.documate.stats.md), [`src/documate/ui.py`](architecture/src.documate.ui.md), [`src/documate/undo.py`](architecture/src.documate.undo.md)
+**depends on** [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/config.py`](architecture/src.documate.config.md), [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/rewrap.py`](architecture/src.documate.rewrap.md), [`src/documate/site.py`](architecture/src.documate.site.md), [`src/documate/stats.py`](architecture/src.documate.stats.md), [`src/documate/ui.py`](architecture/src.documate.ui.md), [`src/documate/undo.py`](architecture/src.documate.undo.md)
 
 ## [`src/documate/briefs.py`](architecture/src.documate.briefs.md)
 
@@ -109,7 +118,7 @@ reads it, feeds each brief to the model, then re-runs `documate --check` — the
 itself is the verification loop. Emission is O(diff): a quiet repo writes an empty
 index and nothing else. Stdlib only.
 
-**depends on** [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/drift.py`](architecture/src.documate.drift.md), [`src/documate/extract.py`](architecture/src.documate.extract.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/resolve.py`](architecture/src.documate.resolve.md)  ·  **used by** [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/cli.py`](architecture/src.documate.cli.md), [`src/documate/prose.py`](architecture/src.documate.prose.md)
+**depends on** [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/drift.py`](architecture/src.documate.drift.md), [`src/documate/extract.py`](architecture/src.documate.extract.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/resolve.py`](architecture/src.documate.resolve.md), [`src/documate/ui.py`](architecture/src.documate.ui.md)  ·  **used by** [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/cli.py`](architecture/src.documate.cli.md), [`src/documate/prose.py`](architecture/src.documate.prose.md)
 
 ## [`src/documate/check.py`](architecture/src.documate.check.md)
 
@@ -165,6 +174,8 @@ drop a default (`"!/vendor/"` un-skips vendor/).
                    checkout, worktree-safe via the git common dir)
     format_cmd     command --ai runs over the source files it touched, paths
                    appended ("clang-format -i"); None skips formatting
+    doc_width      column limit --ai wraps drafted doc comments to (100); the
+                   comment markers and indentation count toward it
 
 Unknown config keys are a hard error — a typo silently doing nothing is the exact rot
 documate exists to stop. Stdlib only.
@@ -180,7 +191,7 @@ resolves the root, loads its config, wires the graph adapter, and hands this Con
 every command. No import-time globals — the same process can point at different roots,
 and nothing is hard-bound to one checkout.
 
-**exposes** `Context`  ·  **depends on** [`src/documate/config.py`](architecture/src.documate.config.md), [`src/documate/graphdb.py`](architecture/src.documate.graphdb.md)  ·  **used by** [`src/documate/anchors.py`](architecture/src.documate.anchors.md), [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/cli.py`](architecture/src.documate.cli.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/drift.py`](architecture/src.documate.drift.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/resolve.py`](architecture/src.documate.resolve.md), [`src/documate/site.py`](architecture/src.documate.site.md), [`src/documate/stats.py`](architecture/src.documate.stats.md), [`src/documate/undo.py`](architecture/src.documate.undo.md)
+**exposes** `Context`  ·  **depends on** [`src/documate/config.py`](architecture/src.documate.config.md), [`src/documate/graphdb.py`](architecture/src.documate.graphdb.md)  ·  **used by** [`src/documate/anchors.py`](architecture/src.documate.anchors.md), [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/cli.py`](architecture/src.documate.cli.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/drift.py`](architecture/src.documate.drift.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/resolve.py`](architecture/src.documate.resolve.md), [`src/documate/rewrap.py`](architecture/src.documate.rewrap.md), [`src/documate/site.py`](architecture/src.documate.site.md), [`src/documate/stats.py`](architecture/src.documate.stats.md), [`src/documate/undo.py`](architecture/src.documate.undo.md)
 
 ## [`src/documate/docs.py`](architecture/src.documate.docs.md)
 
@@ -203,7 +214,7 @@ The build is split model -> render on purpose: `build_model` returns plain datac
 into the same model. Output via `ui`, logic stdlib only; graph needed (the CLI
 indexes before calling in).
 
-**exposes** `Model`, `Page`, `_dir`, `_mermaid_lines`, `_slug`, `_tail`, `_tour`, `build_model`  ·  **depends on** [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/extract.py`](architecture/src.documate.extract.md), [`src/documate/stats.py`](architecture/src.documate.stats.md), [`src/documate/ui.py`](architecture/src.documate.ui.md)  ·  **used by** [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/cli.py`](architecture/src.documate.cli.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/site.py`](architecture/src.documate.site.md), [`src/documate/stats.py`](architecture/src.documate.stats.md)
+**exposes** `Model`, `Page`, `_dir`, `_mermaid_lines`, `_slug`, `_tail`, `_tour`, `build_model`  ·  **depends on** [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/extract.py`](architecture/src.documate.extract.md), [`src/documate/stats.py`](architecture/src.documate.stats.md), [`src/documate/ui.py`](architecture/src.documate.ui.md)  ·  **used by** [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/cli.py`](architecture/src.documate.cli.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/rewrap.py`](architecture/src.documate.rewrap.md), [`src/documate/site.py`](architecture/src.documate.site.md), [`src/documate/stats.py`](architecture/src.documate.stats.md)
 
 ## [`src/documate/prose.py`](architecture/src.documate.prose.md)
 
@@ -239,7 +250,26 @@ layer can never trigger on its own output. The model dependency stays behind
 the subprocess boundary; output goes through `ui` (a live progress bar on a
 terminal, a plain transcript in CI).
 
-**depends on** [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/extract.py`](architecture/src.documate.extract.md), [`src/documate/stats.py`](architecture/src.documate.stats.md), [`src/documate/ui.py`](architecture/src.documate.ui.md), [`src/documate/undo.py`](architecture/src.documate.undo.md)  ·  **used by** [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/cli.py`](architecture/src.documate.cli.md)
+**exposes** `_comment_prefix`, `_only`, `_rewrap`  ·  **depends on** [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/extract.py`](architecture/src.documate.extract.md), [`src/documate/stats.py`](architecture/src.documate.stats.md), [`src/documate/ui.py`](architecture/src.documate.ui.md), [`src/documate/undo.py`](architecture/src.documate.undo.md)  ·  **used by** [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/cli.py`](architecture/src.documate.cli.md), [`src/documate/rewrap.py`](architecture/src.documate.rewrap.md)
+
+## [`src/documate/rewrap.py`](architecture/src.documate.rewrap.md)
+
+rewrap.py — reflow doc comments already in the source to `doc_width`.
+
+`documate --rewrap-docs` is the no-model half of the wrapping story. `--ai` wraps
+what it writes, but docs drafted by an earlier version (or by hand, or by another
+tool) sit there one long line each, and a repo with a column limit rejects them.
+This pass fixes them with pure text work: no model, no tokens, no network.
+
+Only a doc comment carrying a line over the limit is touched — one already
+inside it comes out byte-identical, so a sweep can't quietly reformat a repo's
+hand-written prose. Two shapes are understood, the same two `prose` writes:
+a `/** ... */` block (C family) and a run of line comments (`//`, `--`, `#`).
+A Lua `--[[ long comment ]]` ends a run rather than joining it: reflowing one
+would move its delimiters. The pass is idempotent, and every write goes into the
+run manifest, so `documate --undo` takes it back. Stdlib only.
+
+**depends on** [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/extract.py`](architecture/src.documate.extract.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/ui.py`](architecture/src.documate.ui.md), [`src/documate/undo.py`](architecture/src.documate.undo.md)  ·  **used by** [`src/documate/cli.py`](architecture/src.documate.cli.md)
 
 ## [`src/documate/site.py`](architecture/src.documate.site.md)
 
@@ -294,7 +324,7 @@ for non-terminals, and soft_wrap keeps messages greppable at any width.
 Stream contract is preserved from the print() era: successes and advisories
 go to stdout, gate failures to stderr — CI redirects keep meaning.
 
-**used by** [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/cli.py`](architecture/src.documate.cli.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/site.py`](architecture/src.documate.site.md), [`src/documate/stats.py`](architecture/src.documate.stats.md), [`src/documate/undo.py`](architecture/src.documate.undo.md)
+**used by** [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/check.py`](architecture/src.documate.check.md), [`src/documate/cli.py`](architecture/src.documate.cli.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/rewrap.py`](architecture/src.documate.rewrap.md), [`src/documate/site.py`](architecture/src.documate.site.md), [`src/documate/stats.py`](architecture/src.documate.stats.md), [`src/documate/undo.py`](architecture/src.documate.undo.md)
 
 ## [`src/documate/undo.py`](architecture/src.documate.undo.md)
 
@@ -317,7 +347,7 @@ Records from the same process merge (bare `--ai` chains a seeding pass into a
 repair pass — one invocation, one manifest); a new invocation replaces the
 manifest, so `--undo` always means "the last `--ai` run". Stdlib only.
 
-**depends on** [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/ui.py`](architecture/src.documate.ui.md)  ·  **used by** [`src/documate/cli.py`](architecture/src.documate.cli.md), [`src/documate/prose.py`](architecture/src.documate.prose.md)
+**depends on** [`src/documate/core.py`](architecture/src.documate.core.md), [`src/documate/ui.py`](architecture/src.documate.ui.md)  ·  **used by** [`src/documate/cli.py`](architecture/src.documate.cli.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/rewrap.py`](architecture/src.documate.rewrap.md)
 
 ## [`src/documate/drift.py`](architecture/src.documate.drift.md)
 
@@ -361,7 +391,7 @@ Java/...) via the doc-comment block above each symbol (the graph hands us the li
 source hands us the comment), plus the file-top comment block as the module's lead prose. It's the same leading `//`/`/** */` convention doxygen and
 friends read, lifted with string ops — no external doc tool to install. Stdlib only.
 
-**used by** [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/prose.py`](architecture/src.documate.prose.md)
+**used by** [`src/documate/briefs.py`](architecture/src.documate.briefs.md), [`src/documate/docs.py`](architecture/src.documate.docs.md), [`src/documate/prose.py`](architecture/src.documate.prose.md), [`src/documate/rewrap.py`](architecture/src.documate.rewrap.md)
 
 ## [`src/documate/resolve.py`](architecture/src.documate.resolve.md)
 

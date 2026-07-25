@@ -18,6 +18,7 @@ binary at any repo or monorepo sub-tree, --base picks the drift ref, --full
 re-indexes from scratch, --html adds the static site, --briefs emits work
 orders whenever the gate runs. --only/--dry-run/--budget aim, preview, and
 cap an --ai run; --undo reverts the last one from its recorded manifest;
+--rewrap-docs reflows over-long doc comments to doc_width with no model at all;
 --list-undocumented prints the missing-docs map as JSON. One Context per
 invocation, no import-time globals. `--watch --ai` is refused: a model call
 on every save is a token faucet — run --ai as a deliberate one-shot.
@@ -35,7 +36,7 @@ from pathlib import Path
 
 from rich_argparse import RawDescriptionRichHelpFormatter
 
-from . import briefs, check, config, docs, prose, site, stats, ui, undo
+from . import briefs, check, config, docs, prose, rewrap, site, stats, ui, undo
 from .core import Context
 
 
@@ -205,6 +206,12 @@ def build_parser() -> argparse.ArgumentParser:
         "else prints there) and exit — the machine-readable ask",
     )
     p.add_argument(
+        "--rewrap-docs",
+        action="store_true",
+        help="reflow doc comments already in the source to doc_width (no model, "
+        "no tokens); comments that already fit are left byte-identical",
+    )
+    p.add_argument(
         "--undo",
         action="store_true",
         help="revert the last --ai run from its recorded manifest "
@@ -296,6 +303,8 @@ def _dispatch(args) -> int:
         print(json.dumps(briefs.undocumented(ctx), indent=2))
         return 0
     _index(ctx, args.full)
+    if args.rewrap_docs:  # text-only pass: no model, its own mode
+        return rewrap.run(ctx, only=args.only, dry=args.dry_run)
     if args.stats:
         return stats.run(ctx)
     if args.init:
@@ -396,8 +405,22 @@ def main(argv=None) -> int:
                 "--rewrite drives the model over your whole repo — run it as "
                 "`documate --ai <model> --rewrite`, not with --check"
             )
-        if (args.only or args.dry_run or args.budget is not None) and not args.ai:
-            parser.error("--only/--dry-run/--budget steer the model layer — add --ai")
+        if (
+            args.only or args.dry_run or args.budget is not None
+        ) and not (args.ai or args.rewrap_docs):
+            parser.error(
+                "--only/--dry-run/--budget steer a write pass — add --ai or "
+                "--rewrap-docs"
+            )
+        if args.budget is not None and args.rewrap_docs:
+            parser.error("--rewrap-docs calls no model — --budget has nothing to cap")
+        if args.rewrap_docs and (
+            args.check or args.watch or args.ai or args.stats or args.undo
+        ):
+            parser.error(
+                "--rewrap-docs is its own pass (text only, no model) — drop the "
+                "other mode flags"
+            )
         if args.undo and (
             args.check or args.watch or args.ai or args.stats or args.init or args.html
         ):

@@ -20,7 +20,7 @@ The build is split model -> render on purpose: `build_model` returns plain datac
 into the same model. Output via `ui`, logic stdlib only; graph needed (the CLI
 indexes before calling in).
 
-**depends on** [`src/documate/core.py`](src.documate.core.md), [`src/documate/extract.py`](src.documate.extract.md), [`src/documate/stats.py`](src.documate.stats.md), [`src/documate/ui.py`](src.documate.ui.md)  ·  **used by** [`src/documate/briefs.py`](src.documate.briefs.md), [`src/documate/check.py`](src.documate.check.md), [`src/documate/cli.py`](src.documate.cli.md), [`src/documate/prose.py`](src.documate.prose.md), [`src/documate/site.py`](src.documate.site.md), [`src/documate/stats.py`](src.documate.stats.md)  ·  **discussed in** [`notes/v2-direction.md`](../../notes/v2-direction.md)
+**depends on** [`src/documate/core.py`](src.documate.core.md), [`src/documate/extract.py`](src.documate.extract.md), [`src/documate/stats.py`](src.documate.stats.md), [`src/documate/ui.py`](src.documate.ui.md)  ·  **used by** [`src/documate/briefs.py`](src.documate.briefs.md), [`src/documate/check.py`](src.documate.check.md), [`src/documate/cli.py`](src.documate.cli.md), [`src/documate/prose.py`](src.documate.prose.md), [`src/documate/rewrap.py`](src.documate.rewrap.md), [`src/documate/site.py`](src.documate.site.md), [`src/documate/stats.py`](src.documate.stats.md)  ·  **discussed in** [`notes/v2-direction.md`](../../notes/v2-direction.md)
 
 ## API
 

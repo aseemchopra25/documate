@@ -73,14 +73,18 @@ def _block_span(lines: list[str], end: int) -> tuple[int, int] | None:
     return None if lines[i][: lines[i].index("/*")].strip() else (i, end)
 
 
-def doc_above(lines: list[str], decl_idx: int, hash_ok: bool = False) -> str | None:
+def doc_above(
+    lines: list[str], decl_idx: int, hash_ok: bool = False, dash_ok: bool = False
+) -> str | None:
     """The doc-comment block sitting immediately above a declaration (0-indexed line).
 
     Harvests a contiguous `//` / `///` / `//!` run or a `/* ... */` / `/** ... */` block —
     the convention every C-family / Go / Rust / JS-TS doc tool reads — skipping annotation
     and attribute lines (`@Override`, `#[inline]`) that wedge between the comment and the
     decl. With `hash_ok` (shell files, where `#` would otherwise be a directive) a `#` run
-    counts too, minus the shebang and minus letter-free ASCII-art banner lines.
+    counts too, minus the shebang and minus letter-free ASCII-art banner lines. With
+    `dash_ok` (Lua) a `--` / `---` run counts, the LDoc convention; a `--[[ long
+    comment ]]` is not one and reads as undocumented rather than as mangled prose.
     A blank line breaks the claim (godoc/rustdoc/JSDoc all require adjacency —
     a blank-separated comment is the file's, not the symbol's; see `module_doc`).
     Markers stripped. None when there's nothing up there. Heuristic, not a parser:
@@ -127,6 +131,14 @@ def doc_above(lines: list[str], decl_idx: int, hash_ok: bool = False) -> str | N
             body = s.lstrip("#").strip()
             if re.search(r"[A-Za-z]", body):  # letter-free lines are banner art
                 out.append(body)
+        out.reverse()
+    elif dash_ok and lines[i].strip().startswith("--"):  # Lua `--` / `---` run
+        while i >= 0 and lines[i].strip().startswith("--"):
+            s = lines[i].strip()
+            i -= 1
+            if s.startswith("--[["):
+                return None  # a long comment, not a line run: not ours to read
+            out.append(s.lstrip("-").strip())
         out.reverse()
     else:
         return None
@@ -206,6 +218,9 @@ _TYPE_KEYWORDS = "class|struct|enum|actor|protocol|interface|trait|type"
 #: suffixes whose doc comments are `#` runs — elsewhere `#` is a directive (#include)
 _HASH_DOCS = (".sh", ".bash", ".zsh")
 
+#: suffixes whose doc comments are `--` runs (Lua's LDoc convention)
+_DASH_DOCS = (".lua", ".luau")
+
 #: C-family suffixes. Their doc tool is Doxygen, which reads `/** */` blocks and
 #: ignores plain `//` lines, so anything written into these files has to be a
 #: block — see `prose._doxygen_block`. Shared with `briefs`, which scopes
@@ -276,17 +291,18 @@ def comment_symbols(path: Path, syms: list) -> dict:
         return {}
     hlines: list[str] | None = None  # sibling header, loaded on first miss
     hash_ok = path.suffix in _HASH_DOCS
+    dash_ok = path.suffix in _DASH_DOCS
     out: dict = {}
     for s in syms:
         idx = s["line"] - 1  # graph line_start is 1-indexed
         if not (0 <= idx < len(lines)):
             continue
-        sig, doc = signature_at(lines, idx), doc_above(lines, idx, hash_ok)
+        sig, doc = signature_at(lines, idx), doc_above(lines, idx, hash_ok, dash_ok)
         name = short(s["qualified"]).rsplit(".", 1)[-1]  # bare name, for text search
         if doc is None and s.get("kind") != "Function":
             alt = _decl_line(lines, name, s.get("kind", ""), avoid=idx)
             if alt is not None:  # the documented twin's decl is the better signature
-                sig, doc = signature_at(lines, alt), doc_above(lines, alt)
+                sig, doc = signature_at(lines, alt), doc_above(lines, alt, dash_ok=dash_ok)
         if doc is None:
             if hlines is None:
                 hlines = _sibling_header(path)
@@ -334,6 +350,7 @@ def module_doc(path: Path, first_line: int | None = None) -> str | None:
         except (SyntaxError, ValueError):
             return None
     hash_ok = path.suffix in _HASH_DOCS
+    dash_ok = path.suffix in _DASH_DOCS
     i = 1 if lines and lines[0].startswith("#!") else 0
     while True:
         while i < len(lines) and not lines[i].strip():
@@ -355,9 +372,13 @@ def module_doc(path: Path, first_line: int | None = None) -> str | None:
             end = i
             while end + 1 < len(lines) and lines[end + 1].strip().startswith("#"):
                 end += 1
+        elif dash_ok and head.startswith("--"):
+            end = i
+            while end + 1 < len(lines) and lines[end + 1].strip().startswith("--"):
+                end += 1
         else:
             return None
-        text = doc_above(lines, end + 1, hash_ok)
+        text = doc_above(lines, end + 1, hash_ok, dash_ok)
         if text and _BOILER.search(text):
             i = end + 1  # boilerplate: skip the block, try the next one
             continue

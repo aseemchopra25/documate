@@ -9,7 +9,7 @@ Java/...) via the doc-comment block above each symbol (the graph hands us the li
 source hands us the comment), plus the file-top comment block as the module's lead prose. It's the same leading `//`/`/** */` convention doxygen and
 friends read, lifted with string ops — no external doc tool to install. Stdlib only.
 
-**used by** [`src/documate/briefs.py`](src.documate.briefs.md), [`src/documate/docs.py`](src.documate.docs.md), [`src/documate/prose.py`](src.documate.prose.md)  ·  **discussed in** [`notes/v2-direction.md`](../../notes/v2-direction.md)
+**used by** [`src/documate/briefs.py`](src.documate.briefs.md), [`src/documate/docs.py`](src.documate.docs.md), [`src/documate/prose.py`](src.documate.prose.md), [`src/documate/rewrap.py`](src.documate.rewrap.md)  ·  **discussed in** [`notes/v2-direction.md`](../../notes/v2-direction.md)
 
 ```mermaid
 flowchart TD
@@ -62,7 +62,7 @@ and — because a rewrite replaces the lines it is given — deletes the typedef
 
 **called by** `doc_above`, `doc_span`
 
-### `doc_above(lines: list[str], decl_idx: int, hash_ok: bool=False) -> str | None`
+### `doc_above(lines: list[str], decl_idx: int, hash_ok: bool=False, dash_ok: bool=False) -> str | None`
 `src/documate/extract.py:76`
 
 The doc-comment block sitting immediately above a declaration (0-indexed line).
@@ -71,7 +71,9 @@ Harvests a contiguous `//` / `///` / `//!` run or a `/* ... */` / `/** ... */` b
 the convention every C-family / Go / Rust / JS-TS doc tool reads — skipping annotation
 and attribute lines (`@Override`, `#[inline]`) that wedge between the comment and the
 decl. With `hash_ok` (shell files, where `#` would otherwise be a directive) a `#` run
-counts too, minus the shebang and minus letter-free ASCII-art banner lines.
+counts too, minus the shebang and minus letter-free ASCII-art banner lines. With
+`dash_ok` (Lua) a `--` / `---` run counts, the LDoc convention; a `--[[ long
+comment ]]` is not one and reads as undocumented rather than as mangled prose.
 A blank line breaks the claim (godoc/rustdoc/JSDoc all require adjacency —
 a blank-separated comment is the file's, not the symbol's; see `module_doc`).
 Markers stripped. None when there's nothing up there. Heuristic, not a parser:
@@ -80,7 +82,7 @@ the graph already told us *where* the symbol is, so this is just "read the lines
 **called by** `_decl_line`, `comment_symbols`, `module_doc`  ·  **calls** `_block_span`
 
 ### `doc_span(lines: list[str], decl_idx: int) -> tuple[int, int] | None`
-`src/documate/extract.py:137`
+`src/documate/extract.py:149`
 
 (start, end) 0-indexed inclusive of the doc-comment block immediately above
 `decl_idx` — exactly the lines `doc_above` reads as the doc — or None when
@@ -91,7 +93,7 @@ hopping the same annotation/attribute lines wedged between doc and declaration.
 **calls** `_block_span`
 
 ### `signature_at(lines: list[str], idx: int) -> str | None`
-`src/documate/extract.py:164`
+`src/documate/extract.py:176`
 
 The full declaration starting at line `idx` (0-indexed), rejoined when it wraps.
 
@@ -103,7 +105,7 @@ is a signature, not a file.
 **called by** `comment_symbols`
 
 ### `_sibling_header(path: Path) -> list[str]`
-`src/documate/extract.py:216`
+`src/documate/extract.py:231`
 
 Lines of the header next to a C/C++/ObjC implementation file, [] when none.
 
@@ -114,7 +116,7 @@ decl/def merge, done with string ops.
 **called by** `comment_symbols`
 
 ### `_decl_line(lines: list[str], name: str, kind: str, avoid: int=-1) -> int | None`
-`src/documate/extract.py:234`
+`src/documate/extract.py:249`
 
 The line index of another *documented* declaration of `name`, or None.
 
@@ -130,7 +132,7 @@ excludes the node's own line.
 **called by** `comment_symbols`  ·  **calls** `doc_above`
 
 ### `comment_symbols(path: Path, syms: list) -> dict`
-`src/documate/extract.py:261`
+`src/documate/extract.py:276`
 
 {dotted name: (signature, doc|None)} for a non-Python file: the graph gives each
 symbol's line, source gives the declaration (`signature_at`) and the comment above
@@ -147,7 +149,7 @@ checked via `_decl_line` before giving up.
 **called by** `extract`  ·  **calls** `_decl_line`, `_sibling_header`, `doc_above`, `short`, `signature_at`
 
 ### `extract(path: Path, syms: list) -> dict`
-`src/documate/extract.py:303`
+`src/documate/extract.py:319`
 
 Per-language doc extraction: Python through stdlib `ast`, everything else through the
 comment-above-declaration harvester. The one place that knows a file's language.
@@ -155,7 +157,7 @@ comment-above-declaration harvester. The one place that knows a file's language.
 **calls** `comment_symbols`, `py_symbols`
 
 ### `module_doc(path: Path, first_line: int | None=None) -> str | None`
-`src/documate/extract.py:317`
+`src/documate/extract.py:333`
 
 The module-level prose of a file: Python's module docstring; any other language's
 comment block at the top of the file (Go's `// Package x ...`, a doxygen `@file`

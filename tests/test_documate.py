@@ -29,6 +29,7 @@ from documate import extract as EX
 from documate import cli as CLI
 from documate import prose as P
 from documate import resolve as R
+from documate import rewrap as RW
 from documate import site as SITE
 from documate import stats as ST
 from documate import ui as UI
@@ -1542,6 +1543,474 @@ class TestUndocumentedBriefs(RealGraph):
         self.assertIn(("module", "pkg/core.py", "module"), undoc)
         # documented symbols stay out
         self.assertNotIn(("undocumented", "pkg/core.py", "helper"), undoc)
+
+
+class TestLuaRoundTrip(RealGraph):
+    """A drafted Lua doc must be readable back, or the symbol is re-drafted every
+    run forever: `--` is both what prose inserts and what extract harvests."""
+
+    def _lua(self) -> None:
+        _w(
+            self.dir / "tools" / "proto.lua",
+            "-- Packet dissector helpers.\n\nfunction decode(buf)\n  return buf\nend\n",
+        )
+        _git(self.dir, "add", "-A")  # the engine enumerates via git ls-files
+        self.ctx.graph.index(incremental=True)
+
+    def test_draft_lands_as_a_dash_run_and_reads_back(self):
+        import contextlib
+        import io
+        import sys
+
+        self._lua()
+        row = next(
+            r
+            for r in BR.emit(self.ctx, "HEAD", [], self.dir / ".documate" / "briefs")
+            if r["file"] == "tools/proto.lua" and r["kind"] == "undocumented"
+        )
+        self.assertEqual(row["symbol"], "decode")
+        self.assertEqual(P._split([row]), ([row], []))  # batched, not the slow agent
+        script = self.dir / "fake_model.py"
+        script.write_text(
+            "import re, sys\n"
+            "prompt = sys.stdin.read()\n"
+            'for n, _ in re.findall(r"## Work order (\\d+): `([^`]+)`", prompt):\n'
+            '    print(f"<<<doc {n}>>>")\n'
+            '    print("Decodes one frame.")\n'
+            '    print("<<<end>>>")\n'
+        )
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = P.fix_docs(
+                self.ctx, "fake", cmd=[sys.executable, str(script)], yes=True
+            )
+        self.assertEqual(rc, 0)
+        src = (self.dir / "tools" / "proto.lua").read_text()
+        self.assertIn("-- Decodes one frame.\nfunction decode(buf)", src)
+        syms = [{"qualified": "proto.lua::decode", "line": 4, "kind": "Function"}]
+        self.assertEqual(
+            EX.comment_symbols(self.dir / "tools" / "proto.lua", syms)["decode"][1],
+            "Decodes one frame.",
+        )
+        # and a second run has nothing left to say about it
+        self.ctx.graph.index(incremental=True)
+        again = BR.emit(self.ctx, "HEAD", [], self.dir / ".documate" / "briefs2")
+        self.assertNotIn(
+            ("tools/proto.lua", "decode"), {(r["file"], r["symbol"]) for r in again}
+        )
+
+
+class TestCppEndToEnd(RealGraph):
+    """C++ across the forms real code is made of — out-of-line methods, an
+    inherited class, a destructor, an operator, an in-class inline body, a
+    template member, an anonymous-namespace helper, a static function whose
+    return type sits on its own line.
+
+    The loop that matters is closed, not just the insert: every symbol must be
+    ordered, inserted as Doxygen, and read back after the re-index. A doc that
+    can't be read back leaves the symbol undocumented and re-drafted every run
+    forever — the failure the Lua path shipped with."""
+
+    HDR = (
+        "#pragma once\n#include <cstdint>\n\nnamespace core {\n\n"
+        "struct Frame {\n  uint8_t *data;\n};\n\n"
+        "class Reader {\n public:\n  virtual ~Reader();\n"
+        "  bool ready() const { return ready_; }\n\n protected:\n"
+        "  bool ready_{false};\n};\n\n"
+        "class FileReader final : public Reader {\n public:\n"
+        "  explicit FileReader(int slot);\n"
+        "  FileReader &operator=(const FileReader &o);\n\n private:\n"
+        "  int slot_;\n};\n\n"
+        "template <typename T>\nclass Ring {\n public:\n  void Push(const T &v);\n};\n\n"
+        "}  // namespace core\n"
+    )
+    SRC = (
+        '#include "reader.hpp"\n\nnamespace core {\n\n'
+        "Reader::~Reader() = default;\n\n"
+        "FileReader::FileReader(int slot) : slot_(slot) {}\n\n"
+        "FileReader &FileReader::operator=(const FileReader &o) {\n"
+        "  slot_ = o.slot_;\n  return *this;\n}\n\n"
+        "template <typename T>\nvoid Ring<T>::Push(const T &v) {\n  (void)v;\n}\n\n"
+        "static inline uint32_t\nChecksum(const uint8_t *buf) {\n  return buf[0];\n}\n\n"
+        "namespace {\nint HelperInAnonNs(int x) { return x * 2; }\n}  // namespace\n\n"
+        "}  // namespace core\n"
+    )
+
+    def _cpp(self) -> None:
+        _w(self.dir / "src" / "reader.hpp", self.HDR)
+        _w(self.dir / "src" / "reader.cpp", self.SRC)
+        _git(self.dir, "add", "-A")
+        self.ctx.graph.index(incremental=True)
+
+    def test_every_undocumented_cpp_symbol_is_ordered_inserted_and_read_back(self):
+        self._cpp()
+        cpp = {"src/reader.hpp", "src/reader.cpp"}
+        listed = {
+            (r["file"], r["symbol"])
+            for r in BR.undocumented(self.ctx)
+            if r["file"] in cpp
+        }
+        index = [
+            r
+            for r in BR.emit(
+                self.ctx,
+                "HEAD",
+                [],
+                self.dir / ".documate" / "briefs",
+                undocumented="all",
+            )
+            if r["file"] in cpp
+        ]
+        # nothing silently dropped between "what's missing" and "what we'll fix"
+        self.assertEqual({(r["file"], r["symbol"]) for r in index}, listed)
+        self.assertIn(("src/reader.cpp", "HelperInAnonNs"), listed)
+        self.assertIn(("src/reader.hpp", "Reader.ready"), listed)
+
+        shifts: dict = {}
+        for row in sorted(index, key=lambda r: (r["file"], -(r.get("line") or 0))):
+            if row["kind"] != "undocumented":
+                continue
+            self.assertIsNone(
+                P._insert(self.ctx, row, f"Does the {row['symbol']} thing.", shifts),
+                f"insert refused {row['symbol']}",
+            )
+        # Doxygen form, not a `//` run: the marker the language's doc tool reads
+        self.assertIn("/**", (self.dir / "src" / "reader.cpp").read_text())
+
+        self.ctx.graph.index(incremental=True)
+        left = {
+            (r["file"], r["symbol"])
+            for r in BR.undocumented(self.ctx)
+            if r["file"] in cpp and r["kind"] == "undocumented"
+        }
+        self.assertEqual(left, set())  # the loop closes: nothing to re-draft
+
+
+class TestRewrapDocs(RealGraph):
+    """`--rewrap-docs`: reflow doc comments already in the source, no model. Only
+    a comment that overflows is touched — a sweep must never quietly reformat a
+    repo's hand-written prose — and the pass is idempotent and undoable."""
+
+    LONG = (
+        "Session context holding all state needed to manage an client session: "
+        "connection handle, protocol version, cryptographic keys, buffers, "
+        "counters, and access document details."
+    )
+
+    def _repo(self) -> None:
+        _w(
+            self.dir / "src" / "a.cpp",
+            f"/**\n * {self.LONG}\n */\nstruct SessionContext {{\n\tint x;\n}};\n\n"
+            "/**\n * Already short.\n */\nint fits(void)\n{\n\treturn 0;\n}\n",
+        )
+        _w(
+            self.dir / "src" / "b.lua",
+            f"-- {self.LONG}\n--[[ a long comment, left alone ]]\nfunction go()\nend\n",
+        )
+        _git(self.dir, "add", "-A")
+        self.ctx.graph.index(incremental=True)
+
+    def _run(self, **kw):
+        import contextlib
+        import io
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = RW.run(self.ctx, **kw)
+        return rc, buf.getvalue()
+
+    def test_overlong_comments_wrap_and_short_ones_are_untouched(self):
+        self._repo()
+        short_before = (self.dir / "src" / "a.cpp").read_text()
+        rc, out = self._run()
+        self.assertEqual(rc, 0)
+        cpp = (self.dir / "src" / "a.cpp").read_text()
+        for ln in cpp.splitlines():
+            self.assertLessEqual(len(ln.expandtabs(8)), 100, ln)
+        self.assertIn("/**\n * Already short.\n */", cpp)  # byte-identical
+        self.assertNotEqual(cpp, short_before)  # but the long one did move
+        # every word survives the reflow, in order
+        body = " ".join(
+            ln.lstrip(" *").strip()
+            for ln in cpp.splitlines()[1:3]
+        )
+        self.assertEqual(body.split(), self.LONG.split())
+
+    def test_lua_run_wraps_and_the_long_comment_is_left_alone(self):
+        self._repo()
+        self._run()
+        lua = (self.dir / "src" / "b.lua").read_text()
+        for ln in lua.splitlines():
+            self.assertLessEqual(len(ln.expandtabs(8)), 100, ln)
+        self.assertIn("--[[ a long comment, left alone ]]", lua)
+
+    def test_second_pass_changes_nothing(self):
+        self._repo()
+        self._run()
+        after = (self.dir / "src" / "a.cpp").read_text()
+        rc, out = self._run()
+        self.assertEqual(rc, 0)
+        self.assertIn("already fits", out)
+        self.assertEqual((self.dir / "src" / "a.cpp").read_text(), after)
+
+    def test_dry_run_writes_nothing(self):
+        self._repo()
+        before = (self.dir / "src" / "a.cpp").read_text()
+        rc, out = self._run(dry=True)
+        self.assertEqual(rc, 0)
+        self.assertIn("--dry-run", out)
+        self.assertEqual((self.dir / "src" / "a.cpp").read_text(), before)
+
+    def test_only_narrows_the_sweep(self):
+        self._repo()
+        lua_before = (self.dir / "src" / "b.lua").read_text()
+        self._run(only="src/a.cpp")
+        self.assertEqual((self.dir / "src" / "b.lua").read_text(), lua_before)
+
+    def test_undo_reverts_the_pass(self):
+        import contextlib
+        import io
+
+        self._repo()
+        before = (self.dir / "src" / "a.cpp").read_text()
+        self._run()
+        self.assertNotEqual((self.dir / "src" / "a.cpp").read_text(), before)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            U.undo_last(self.ctx)
+        self.assertEqual((self.dir / "src" / "a.cpp").read_text(), before)
+
+    def test_a_repo_that_already_fits_says_so(self):
+        rc, out = self._run()  # setUp's Python-only repo
+        self.assertEqual(rc, 0)
+        self.assertIn("already fits", out)
+
+
+class TestDocWrapping(unittest.TestCase):
+    """A model drafts one long line; a C codebase with a column gate rejects it.
+    Drafts wrap to `doc_width` (100 by default), counting the indentation and the
+    comment markers — the columns the gate counts."""
+
+    LONG = (
+        "Session context holding all state needed to manage an client session: "
+        "connection handle, protocol version, cryptographic keys, buffers, "
+        "counters, and access document details."
+    )
+
+    def test_doxygen_block_wraps_to_the_column_limit(self):
+        block = P._doxygen_block(self.LONG, "", 100)
+        lines = block.splitlines()
+        self.assertEqual(lines[0], "/**")
+        self.assertEqual(lines[-1], " */")
+        self.assertTrue(all(len(ln) <= 100 for ln in lines), lines)
+        self.assertGreater(len(lines), 3)  # actually broke it up
+        # every word survives, in order
+        body = " ".join(ln.lstrip(" *").strip() for ln in lines[1:-1])
+        self.assertEqual(body.split(), self.LONG.split())
+
+    def test_indent_and_markers_count_toward_the_limit(self):
+        # a tab is 8 columns to the format gates this targets, not one character
+        block = P._doxygen_block(self.LONG, "\t\t", 60)
+        for ln in block.splitlines():
+            self.assertLessEqual(len(ln.expandtabs(8)), 60, ln)
+
+    def test_zero_width_leaves_the_draft_alone(self):
+        block = P._doxygen_block(self.LONG, "", 0)
+        self.assertIn(self.LONG, block)
+
+    def test_doxygen_commands_start_their_own_line(self):
+        text = "Parses a frame.\n@param buf the bytes to read from\n@return the count"
+        lines = P._doxygen_block(text, "", 40).splitlines()
+        starts = [ln.lstrip(" *").strip() for ln in lines[1:-1]]
+        self.assertTrue(any(s.startswith("@param buf") for s in starts))
+        self.assertTrue(any(s.startswith("@return") for s in starts))
+        # a wrapped command's continuation must not begin a new @-command
+        self.assertEqual(sum(s.startswith("@param") for s in starts), 1)
+
+    def test_a_word_longer_than_the_limit_is_not_broken(self):
+        url = "https://example.invalid/" + "x" * 90
+        lines = P._doxygen_block(f"See {url} for details.", "", 40).splitlines()
+        self.assertTrue(any(url in ln for ln in lines), lines)
+
+    def test_line_comment_languages_wrap_too(self):
+        block = P._comment(self.LONG, "", "--", 60)
+        for ln in block.splitlines():
+            self.assertLessEqual(len(ln), 60, ln)
+            self.assertTrue(ln.startswith("-- "))
+
+    def test_blank_lines_survive_as_paragraph_breaks(self):
+        lines = P._doxygen_block("First para.\n\nSecond para.", "", 100).splitlines()
+        self.assertIn(" *", lines)
+
+
+class TestAllmanBraceStyle(RealGraph):
+    """Kernel/Zephyr/Allman style puts the brace on its own line. Classifying a
+    brace by the text on *its* line read `namespace core\\n{` as a function body,
+    so every symbol below it in the file was judged un-documentable — one bare `{`
+    silenced a whole translation unit. A destructor adds the second half: `\\b`
+    finds no boundary before `~`, so `~ScopedLock` never matched its own
+    declaration."""
+
+    SRC = (
+        "#include <cstdint>\n\n"
+        "int FileScope(int x)\n{\n\treturn x;\n}\n\n"
+        "namespace core\n{\n\n"
+        "class ScopedLock\n{\n public:\n\tScopedLock();\n\t~ScopedLock();\n"
+        " private:\n\tint held_;\n};\n\n"
+        "ScopedLock::~ScopedLock()\n{\n\theld_ = 0;\n}\n\n"
+        "int Engine::Init()\n{\n\treturn 0;\n}\n\n"
+        "uint8_t Engine::GetFeatures() const\n{\n\treturn 0;\n}\n\n"
+        "}  // namespace core\n"
+    )
+
+    def test_symbols_below_an_own_line_brace_still_get_orders(self):
+        _w(self.dir / "src" / "stack.cpp", self.SRC)
+        _git(self.dir, "add", "-A")
+        self.ctx.graph.index(incremental=True)
+        listed = {
+            r["symbol"]
+            for r in BR.undocumented(self.ctx)
+            if r["file"] == "src/stack.cpp" and r["kind"] == "undocumented"
+        }
+        index = BR.emit(
+            self.ctx, "HEAD", [], self.dir / ".documate" / "briefs", undocumented="all"
+        )
+        ordered = {
+            r["symbol"]
+            for r in index
+            if r["file"] == "src/stack.cpp" and r["kind"] == "undocumented"
+        }
+        self.assertEqual(ordered, listed)  # nothing silenced by the bare `{`
+        self.assertIn("Init", ordered)  # below `namespace core\n{`
+        self.assertIn("GetFeatures", ordered)
+        self.assertTrue(
+            any(s.endswith("~ScopedLock") for s in ordered), f"destructor missing: {ordered}"
+        )
+
+        shifts: dict = {}
+        rows = [
+            r
+            for r in index
+            if r["file"] == "src/stack.cpp" and r["kind"] == "undocumented"
+        ]
+        for row in sorted(rows, key=lambda r: -(r.get("line") or 0)):
+            self.assertIsNone(
+                P._insert(self.ctx, row, f"Does the {row['symbol']} thing.", shifts),
+                f"insert refused {row['symbol']}",
+            )
+        self.ctx.graph.index(incremental=True)
+        left = {
+            r["symbol"]
+            for r in BR.undocumented(self.ctx)
+            if r["file"] == "src/stack.cpp" and r["kind"] == "undocumented"
+        }
+        self.assertEqual(left, set())  # every draft reads back
+
+    def test_a_function_body_still_blocks_a_doc(self):
+        # the guard the fix must not weaken: a name matched inside a body is a
+        # local, not a definition, whichever line the brace sits on
+        lines = "int f(void)\n{\n\tint local = 1;\n\treturn local;\n}\n".splitlines()
+        self.assertFalse(P._at_definition(lines, 2))  # inside the body
+        self.assertTrue(P._at_definition(lines, 0))  # at file scope
+
+    def test_member_scope_is_still_allowed_on_one_line(self):
+        lines = "struct s {\n\tint x;\n};\n".splitlines()
+        self.assertTrue(P._at_definition(lines, 1))  # a member's doc belongs here
+
+
+class TestDroppedCSymbolsAreReported(RealGraph):
+    """A C-family symbol whose recorded line isn't a definition gets no work order —
+    correct, but it must not be silent: --list-undocumented still counts it, so an
+    unexplained drop reads as documate refusing work it just called outstanding."""
+
+    def test_the_drop_names_a_count_and_a_site(self):
+        import contextlib
+        import io
+
+        _w(self.dir / "src" / "a.c", "int add(int x)\n{\n    return x + 1;\n}\n")
+        _git(self.dir, "add", "-A")
+        self.ctx.graph.index(incremental=True)
+        real = BR._definition_site
+        buf = io.StringIO()
+        try:  # the heuristic's verdict is tested elsewhere; this pins the reporting
+            BR._definition_site = lambda *a, **k: False
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                index = BR.emit(
+                    self.ctx,
+                    "HEAD",
+                    [],
+                    self.dir / ".documate" / "briefs",
+                    undocumented="all",
+                )
+        finally:
+            BR._definition_site = real
+        shown = buf.getvalue()
+        self.assertIn("no definition site", shown)
+        self.assertIn("src/a.c", shown)  # which symbol, not just a count
+        self.assertNotIn("add", {r["symbol"] for r in index})
+
+
+class TestUnsupportedLanguageRefused(RealGraph):
+    """A docstring order documate cannot insert is refused, not handed to the model
+    with Read+Edit: unguarded edits to a file whose docs can't be read back would be
+    re-drafted every run forever. The refusal is loud and the file is untouched."""
+
+    def test_no_work_order_and_no_model_call_for_an_unknown_language(self):
+        import contextlib
+        import io
+        import sys
+
+        src = "class Widget\n  def render\n  end\nend\n"
+        _w(self.dir / "app" / "widget.rb", src)
+        _git(self.dir, "add", "-A")
+        self.ctx.graph.index(incremental=True)
+        script = self.dir / "boom_model.py"
+        script.write_text("import sys; sys.exit(3)\n")  # any call would fail loudly
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = P.fix_docs(
+                self.ctx,
+                "fake",
+                cmd=[sys.executable, str(script)],
+                yes=True,
+                only="app/*",
+            )
+        shown = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("unsupported language", shown)
+        self.assertIn(".rb", shown)  # which language, not just a count
+        self.assertEqual((self.dir / "app" / "widget.rb").read_text(), src)
+
+    def test_supported_orders_survive_the_filter(self):
+        rows = [
+            {"kind": "undocumented", "file": "a.py", "symbol": "f"},
+            {"kind": "undocumented", "file": "b.lua", "symbol": "g"},
+            {"kind": "undocumented", "file": "c.rb", "symbol": "h"},
+            {"kind": "drift", "file": "d.rb", "page": "docs/guides/x.md", "symbol": "h"},
+        ]
+        kept = P._supported(rows)
+        self.assertEqual(
+            [r["file"] for r in kept], ["a.py", "b.lua", "d.rb"]
+        )  # drift edits the page, not the .rb source: still allowed
+
+
+class TestStrayEditGuard(RealGraph):
+    """The agentic path lets the model edit in place, and files outside the work
+    order never reach the undo manifest — so they are named on the terminal, which
+    is the only thing that makes `git checkout` possible."""
+
+    def test_edit_outside_the_work_order_is_named(self):
+        _w(self.dir / "pkg" / "core.py", (self.dir / "pkg" / "core.py").read_text())
+        row = {"kind": "drift", "file": "pkg/core.py", "symbol": "helper"}
+        tree = P._dirty(self.ctx)
+        _w(self.dir / "pkg" / "sneaky.py", "x = 1\n")  # the model wandering off
+        self.assertEqual(P._stray(self.ctx, row, tree), ["pkg/sneaky.py"])
+
+    def test_the_orders_own_target_is_not_stray(self):
+        row = {"kind": "drift", "file": "pkg/core.py", "symbol": "helper"}
+        tree = P._dirty(self.ctx)
+        _w(self.dir / "pkg" / "core.py", "# edited\n")
+        self.assertEqual(P._stray(self.ctx, row, tree), [])
 
 
 class TestProseSeed(RealGraph):
@@ -3370,6 +3839,51 @@ class TestShellExtract(unittest.TestCase):
         self.assertIsNone(EX.module_doc(p))
 
 
+class TestLuaExtract(unittest.TestCase):
+    """Lua documents itself with `--` / `---` runs (LDoc) — honored for .lua/.luau
+    and only there. A `--[[ long comment ]]` is not a line run: reading it as prose
+    would harvest the brackets, so it reads as undocumented instead."""
+
+    def setUp(self) -> None:
+        self.dir = Path(tempfile.mkdtemp(prefix="documate_lua_"))
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _f(self, name: str, src: str) -> Path:
+        p = self.dir / name
+        p.write_text(src)
+        return p
+
+    def test_ldoc_run_above_a_function(self):
+        p = self._f(
+            "proto.lua",
+            "--- Decodes one Proto frame.\n"
+            "-- @param buf the bytes\n"
+            "function decode(buf)\nend\n",
+        )
+        syms = [{"qualified": "proto.lua::decode", "line": 3, "kind": "Function"}]
+        self.assertEqual(
+            EX.comment_symbols(p, syms)["decode"][1],
+            "Decodes one Proto frame.\n@param buf the bytes",
+        )
+
+    def test_long_comment_is_not_a_doc_run(self):
+        p = self._f("proto.lua", "--[[ Decodes. ]]\nfunction decode(buf)\nend\n")
+        syms = [{"qualified": "proto.lua::decode", "line": 2, "kind": "Function"}]
+        self.assertIsNone(EX.comment_symbols(p, syms)["decode"][1])
+
+    def test_dash_header_is_module_prose(self):
+        p = self._f("proto.lua", "-- Proto dissector.\n\nlocal x = 1\n")
+        self.assertEqual(EX.module_doc(p), "Proto dissector.")
+
+    def test_dashes_elsewhere_are_not_doc_comments(self):
+        p = self._f("q.sql", "-- not a doc language here\nselect 1;\n")
+        self.assertIsNone(EX.module_doc(p))
+
+
 class TestDeclDefMerge(unittest.TestCase):
     """comment_symbols looks past the node's own line when nothing sits above it: the
     doc may legitimately live on the C header prototype (doxygen's decl/def merge) or
@@ -3804,7 +4318,11 @@ class CFamilyInsertTest(unittest.TestCase):
 
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp(prefix="documate_cfam_")).resolve()
-        self.ctx = SimpleNamespace(root=self.dir)
+        # doc_width 0 keeps these fixtures' expected text unwrapped; wrapping has
+        # its own tests
+        self.ctx = SimpleNamespace(
+            root=self.dir, config=SimpleNamespace(doc_width=0)
+        )
 
     def _write(self, name: str, src: str) -> Path:
         path = self.dir / name

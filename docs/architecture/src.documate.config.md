@@ -32,6 +32,8 @@ drop a default (`"!/vendor/"` un-skips vendor/).
                    checkout, worktree-safe via the git common dir)
     format_cmd     command --ai runs over the source files it touched, paths
                    appended ("clang-format -i"); None skips formatting
+    doc_width      column limit --ai wraps drafted doc comments to (100); the
+                   comment markers and indentation count toward it
 
 Unknown config keys are a hard error — a typo silently doing nothing is the exact rot
 documate exists to stop. Stdlib only.
@@ -41,21 +43,21 @@ documate exists to stop. Stdlib only.
 ## API
 
 ### `class Config`
-`src/documate/config.py:92`
+`src/documate/config.py:97`
 
 Resolved config. Paths absolute.
 
 **called by** `load_config`
 
 ### `_config_path(root: Path) -> Path | None`
-`src/documate/config.py:106`
+`src/documate/config.py:112`
 
 The config file to honour: $DOCUMATE_CONFIG, else the first repo-root name that exists.
 
 **called by** `load_config`, `scaffold`
 
 ### `scaffold(root: Path) -> Path | None`
-`src/documate/config.py:119`
+`src/documate/config.py:125`
 
 Write a starter `documate.config.json` at the repo root for the user to
 edit, and return its path — or None when a config already exists (never
@@ -65,9 +67,18 @@ lists (an empty list adds nothing — it's the honest "no overrides yet").
 
 **calls** `_config_path`
 
+### `_width(value, src: Path | None) -> int`
+`src/documate/config.py:145`
+
+`doc_width` as a usable column limit. A width narrower than the comment
+markers themselves can't wrap anything, so a nonsense value is a hard error
+like an unknown key — not a silent fallback that quietly stops wrapping.
+
+**called by** `load_config`
+
 ### `load_config(root: Path) -> Config`
-`src/documate/config.py:139`
+`src/documate/config.py:154`
 
 Merge the override file (if any) over the defaults and resolve to a Config.
 
-**calls** `Config`, `_config_path`
+**calls** `Config`, `_config_path`, `_width`

@@ -20,7 +20,7 @@ Records from the same process merge (bare `--ai` chains a seeding pass into a
 repair pass — one invocation, one manifest); a new invocation replaces the
 manifest, so `--undo` always means "the last `--ai` run". Stdlib only.
 
-**depends on** [`src/documate/core.py`](src.documate.core.md), [`src/documate/ui.py`](src.documate.ui.md)  ·  **used by** [`src/documate/cli.py`](src.documate.cli.md), [`src/documate/prose.py`](src.documate.prose.md)
+**depends on** [`src/documate/core.py`](src.documate.core.md), [`src/documate/ui.py`](src.documate.ui.md)  ·  **used by** [`src/documate/cli.py`](src.documate.cli.md), [`src/documate/prose.py`](src.documate.prose.md), [`src/documate/rewrap.py`](src.documate.rewrap.md)
 
 ```mermaid
 flowchart TD

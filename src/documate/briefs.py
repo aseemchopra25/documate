@@ -27,7 +27,7 @@ import json
 import re
 from pathlib import Path
 
-from . import docs, drift, extract
+from . import docs, drift, extract, ui
 from .core import Context
 from .resolve import resolve
 
@@ -268,6 +268,7 @@ def _undoc_briefs(
     undocumented = _no_doc(ctx, cand)
     out: list[tuple[str, dict]] = []
     lines_of: dict[str, list[str]] = {}
+    no_site: list[str] = []  # dropped below; counted so the drop is never silent
     for s in _bottom_up(undocumented, xrefs[1]):
         rel = ctx.rel(s["file"])
         node = next(
@@ -290,7 +291,9 @@ def _undoc_briefs(
                 except OSError:
                     lines_of[s["file"]] = []
             if not _definition_site(lines_of[s["file"]], s["name"], line):
-                continue  # a use site, not the definition — the inserter would refuse
+                # a use site, not the definition — the inserter would refuse
+                no_site.append(f"{rel}:{line} {s['name']}")
+                continue
         why = (
             "is undocumented"
             if scope == "all"
@@ -322,6 +325,16 @@ def _undoc_briefs(
             "line_end": line_end,
         }
         out.append(("\n\n".join(parts) + "\n", meta))
+    if no_site:
+        # --list-undocumented counts these as missing docs, so dropping them in
+        # silence reads as documate refusing work it just said was outstanding.
+        shown = ", ".join(no_site[:3]) + (
+            f", +{len(no_site) - 3} more" if len(no_site) > 3 else ""
+        )
+        ui.warn(
+            f"briefs: {len(no_site)} C-family symbol(s) have no definition site at "
+            f"their recorded line — no work order ({shown})"
+        )
     return out
 
 
@@ -351,7 +364,7 @@ def _definition_site(lines: list[str], name: str, line) -> bool:
     refused. The insert-time guard stays as the backstop."""
     from . import prose  # function-level: prose imports briefs at module level
 
-    i = prose._find_decl(lines, line or 1, re.compile(rf"\b{re.escape(name)}\b"))
+    i = prose._find_decl(lines, line or 1, prose._name_re(name))
     return i is not None and prose._at_definition(lines, i)
 
 

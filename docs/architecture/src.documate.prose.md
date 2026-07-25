@@ -33,12 +33,12 @@ layer can never trigger on its own output. The model dependency stays behind
 the subprocess boundary; output goes through `ui` (a live progress bar on a
 terminal, a plain transcript in CI).
 
-**depends on** [`src/documate/briefs.py`](src.documate.briefs.md), [`src/documate/check.py`](src.documate.check.md), [`src/documate/core.py`](src.documate.core.md), [`src/documate/docs.py`](src.documate.docs.md), [`src/documate/extract.py`](src.documate.extract.md), [`src/documate/stats.py`](src.documate.stats.md), [`src/documate/ui.py`](src.documate.ui.md), [`src/documate/undo.py`](src.documate.undo.md)  ·  **used by** [`src/documate/briefs.py`](src.documate.briefs.md), [`src/documate/cli.py`](src.documate.cli.md)  ·  **discussed in** [`notes/v2-direction.md`](../../notes/v2-direction.md)
+**depends on** [`src/documate/briefs.py`](src.documate.briefs.md), [`src/documate/check.py`](src.documate.check.md), [`src/documate/core.py`](src.documate.core.md), [`src/documate/docs.py`](src.documate.docs.md), [`src/documate/extract.py`](src.documate.extract.md), [`src/documate/stats.py`](src.documate.stats.md), [`src/documate/ui.py`](src.documate.ui.md), [`src/documate/undo.py`](src.documate.undo.md)  ·  **used by** [`src/documate/briefs.py`](src.documate.briefs.md), [`src/documate/cli.py`](src.documate.cli.md), [`src/documate/rewrap.py`](src.documate.rewrap.md)  ·  **discussed in** [`notes/v2-direction.md`](../../notes/v2-direction.md)
 
 ## API
 
 ### `_agent(name: str, prompt: str, tools: list[str]) -> list[str]`
-`src/documate/prose.py:56`
+`src/documate/prose.py:57`
 
 The custom-agent flags every model call runs under. A default claude -p
 call ships ~22k tokens of system prompt and tool schemas before the brief
@@ -48,7 +48,7 @@ even starts; an agent declaring only the tools the job needs measures ~3.7k
 **called by** `_cmd`, `_cmd_text`
 
 ### `_cmd(model: str) -> list[str]`
-`src/documate/prose.py:65`
+`src/documate/prose.py:66`
 
 The claude CLI invocation for one brief: print mode, edits auto-accepted,
 an agent carrying only Read+Edit — a work order needs nothing else. JSON
@@ -57,7 +57,7 @@ output so the reply carries its own usage and cost for the meter.
 **called by** `_draft`  ·  **calls** `_agent`
 
 ### `_cmd_text(model: str) -> list[str]`
-`src/documate/prose.py:86`
+`src/documate/prose.py:87`
 
 The claude CLI invocation for a batched call: print mode, a tool-less
 agent — the model writes text, documate does the editing. Streaming JSON
@@ -67,7 +67,7 @@ moment it's generated; --verbose is what print-mode streaming requires.
 **called by** `_lane`  ·  **calls** `_agent`
 
 ### `class _Spend`
-`src/documate/prose.py:119`
+`src/documate/prose.py:120`
 
 The run's exact token/dollar meter, as the CLI reports it — measured,
 never a price table (prices go stale; `total_cost_usd` doesn't). Tokens
@@ -78,14 +78,14 @@ its result payload. `on_change` re-renders whatever line displays it.
 **called by** `fix_check`, `fix_docs`, `fix_rewrite`
 
 #### `_Spend.__init__(self)`
-`src/documate/prose.py:126`
+`src/documate/prose.py:127`
 
 Start at zero, displaying nowhere until `on_change` is bound.
 Calls can stream concurrently (the lanes), so each in-flight call
 keeps its own live counters, keyed by the token `_stream` mints.
 
 #### `_Spend.message(self, key, usage: dict) -> None`
-`src/documate/prose.py:137`
+`src/documate/prose.py:138`
 
 A message_start: bill its input (cache included) and fold the
 call's previous message output into its running count.
@@ -93,14 +93,14 @@ call's previous message output into its running count.
 **called by** `_stream`
 
 #### `_Spend.delta(self, key, usage: dict) -> None`
-`src/documate/prose.py:146`
+`src/documate/prose.py:147`
 
 A message_delta: the message's cumulative output tokens so far.
 
 **called by** `_stream`
 
 #### `_Spend.settle(self, payload: dict, key=None) -> None`
-`src/documate/prose.py:153`
+`src/documate/prose.py:154`
 
 A call finished: fold its authoritative usage and cost (the result
 event's `usage`/`total_cost_usd`) and clear its live counters.
@@ -108,7 +108,7 @@ event's `usage`/`total_cost_usd`) and clear its live counters.
 **called by** `_draft`, `_stream`
 
 #### `_Spend.spent(self) -> float`
-`src/documate/prose.py:167`
+`src/documate/prose.py:168`
 
 Settled dollars so far — what a --budget check compares against.
 Measured from finished calls' own cost reports, never a price table.
@@ -116,13 +116,13 @@ Measured from finished calls' own cost reports, never a price table.
 **called by** `_draft`, `_lane`
 
 #### `_Spend.measured(self) -> bool`
-`src/documate/prose.py:174`
+`src/documate/prose.py:175`
 
 Whether any usage was ever reported (the test seam's scripted
 models report none — their runs stay meter-silent).
 
 #### `_Spend.label(self) -> str`
-`src/documate/prose.py:180`
+`src/documate/prose.py:181`
 
 The running figure, spinner-sized: '4.4k tok · $0.0182'. Dollars
 join once a call has reported cost — the CLI bills per finished call,
@@ -131,7 +131,7 @@ so until then $0.0000 would read as free, not as pending.
 **called by** `_draft`, `_show`, `_totals_line`  ·  **calls** `_tok`
 
 ### `_context(text: str) -> str`
-`src/documate/prose.py:190`
+`src/documate/prose.py:191`
 
 A brief's evidence sections only — everything from the first `## ` heading
 on. The lead paragraph is editing instructions written for the agentic path;
@@ -140,7 +140,7 @@ the batch prompt replaces them with its own output-only instructions.
 **called by** `_batch_prompt`
 
 ### `_batch_prompt(rows: list[dict], briefs_dir: Path) -> str`
-`src/documate/prose.py:198`
+`src/documate/prose.py:199`
 
 One prompt covering a chunk of work orders: shared output-only instructions,
 then each brief's evidence under a numbered heading. A rewrite chunk (C-family)
@@ -150,7 +150,7 @@ too.
 **called by** `_lane`, `_preflight`  ·  **calls** `_context`
 
 ### `_clean(text: str) -> str`
-`src/documate/prose.py:243`
+`src/documate/prose.py:244`
 
 Normalize one reply block into bare docstring prose: strip the fences and
 triple quotes models add despite instructions. What survives is inserted
@@ -158,15 +158,27 @@ verbatim, so anything unusable must fail loudly later, not pass quietly.
 
 **called by** `_absorb`
 
+### `_name_re(name: str) -> re.Pattern`
+`src/documate/prose.py:258`
+
+The symbol's name as a whole-word pattern.
+
+`\b` before the name is wrong for a C++ destructor: `~ScopedLock` starts with a
+non-word character, so there is no boundary between it and the space before it
+and the name never matches its own declaration. A lookbehind for an identifier
+character is the boundary that holds for both.
+
+**called by** `_insert_above`, `_rewrite_above`
+
 ### `_def_re(name: str) -> re.Pattern`
-`src/documate/prose.py:257`
+`src/documate/prose.py:268`
 
 The definition-line pattern for a Python symbol (def/async def/class).
 
 **called by** `_insert_py`
 
 ### `_go_def_re(name: str) -> re.Pattern`
-`src/documate/prose.py:262`
+`src/documate/prose.py:273`
 
 The declaration-line pattern for a Go symbol (func, method with receiver,
 type, var, const).
@@ -174,14 +186,14 @@ type, var, const).
 **called by** `_insert_go`
 
 ### `_comment_prefix(file: str) -> str | None`
-`src/documate/prose.py:296`
+`src/documate/prose.py:308`
 
 The doc-comment line marker for a doc-above language, None otherwise.
 
-**called by** `_insert_above`, `_insert_module`, `_split`
+**called by** `_insert_above`, `_insert_module`, `_insertable`, `_split`
 
 ### `_locate(lines: list[str], pat: re.Pattern, at) -> tuple[int, str | None]`
-`src/documate/prose.py:305`
+`src/documate/prose.py:319`
 
 (index, error) of the definition line: trust the index row's recorded
 line, else re-locate by pattern nearest to it — earlier insertions in the
@@ -190,7 +202,7 @@ same file shift everything below them down.
 **called by** `_insert_go`, `_insert_py`
 
 ### `_insert(ctx: Context, row: dict, text: str, shifts: dict | None=None) -> str | None`
-`src/documate/prose.py:320`
+`src/documate/prose.py:334`
 
 Insert `text` as the work order's documentation, deterministically — the
 model never touches the file on this path. Dispatches on kind and language:
@@ -202,36 +214,53 @@ success.
 
 **called by** `_absorb`  ·  **calls** `_insert_above`, `_insert_go`, `_insert_module`, `_insert_py`, `_rewrite_above`
 
-### `_comment(text: str, ind: str, prefix: str='//') -> str`
-`src/documate/prose.py:341`
+### `_rewrap(lines: list[str], room: int) -> list[str]`
+`src/documate/prose.py:355`
+
+`lines` reflowed to `room` columns of text, blank lines and structure kept.
+
+A model writes its draft as one long line; unwrapped, that lands as a
+200-column comment in a codebase whose format gate stops at 100. Wrapping is
+per line so a deliberate break (a blank line, a bullet) survives, and a
+Doxygen command starts its own line — `@param x ...` must never get another
+line's tail folded onto it, which would change what Doxygen reads. A word
+longer than `room` (a URL, a long identifier) is left over-long rather than
+broken: a split identifier is worse than a long line.
+
+**called by** `_comment`, `_doxygen_block`
+
+### `_comment(text: str, ind: str, prefix: str='//', width: int=0) -> str`
+`src/documate/prose.py:384`
 
 `text` as a `prefix` comment block at `ind`entation — markers a model
 added despite instructions stripped, so they can't double up. Any draft
 embeds safely: a line marker has no closing delimiter to collide with.
+`width` (0 = don't) wraps to that column counting indent and marker.
 
-**called by** `_insert_above`, `_insert_go`, `_insert_module`
+**called by** `_insert_above`, `_insert_go`, `_insert_module`  ·  **calls** `_rewrap`
 
-### `_doxygen_block(text: str, ind: str) -> str | None`
-`src/documate/prose.py:354`
+### `_doxygen_block(text: str, ind: str, width: int=0) -> str | None`
+`src/documate/prose.py:405`
 
 `text` as a Doxygen `/** ... */` block at `ind`entation — the marker Doxygen
 reads, unlike the plain `//` other doc-above inserts use. Any wrapper the model
 added despite instructions (`/**`, `*/`, a leading `*`) is stripped so markers
 can't double up; a blank interior line becomes a lone ` *`. None when nothing
 but markers survives — an empty `/** */` would read as undocumented.
+`width` (0 = don't) wraps to that column counting indent and the ` * ` lead.
 
-**called by** `_insert_above`, `_insert_module`, `_rewrite_above`
+**called by** `_insert_above`, `_insert_module`, `_rewrite_above`  ·  **calls** `_rewrap`
 
 ### `_decl_start(lines: list[str], i: int) -> int`
-`src/documate/prose.py:403`
+`src/documate/prose.py:458`
 
 Index of the first line of the declaration whose name sits on line `i`.
 
 C and C++ routinely break a declaration after the return type, which is the
 house style across the Linux kernel and Zephyr:
 
-    static enum uwb_err
-    parse_session_attribute(struct uwb_msg_attribute *attr, ...)
+    static enum parse_err
+    parse_session_attribute(struct msg_attribute *attr, ...)
 
 Inserting directly above the name line puts the comment *inside* the
 declaration, where Doxygen and `extract.doc_above` both stop seeing it — the
@@ -246,7 +275,7 @@ the symbol's doc, not damage, and ends the walk as before.
 **called by** `_insert_above`, `_rewrite_above`
 
 ### `_wedged_spans(lines: list[str], decl: int, name: int) -> list[tuple[int, int]]`
-`src/documate/prose.py:445`
+`src/documate/prose.py:500`
 
 (start, end) 0-indexed inclusive spans of comment blocks sitting between a
 declaration's first line and its name line — the damage an older insert left
@@ -256,7 +285,7 @@ them is the other half of the repair.
 **called by** `_rewrite_above`
 
 ### `_find_decl(lines: list[str], at: int, word: re.Pattern) -> int | None`
-`src/documate/prose.py:468`
+`src/documate/prose.py:523`
 
 0-index of the line carrying the symbol's name, from its recorded line
 `at` (1-indexed, already shift-corrected), or None.
@@ -272,7 +301,7 @@ legitimately mention it — until the first other code line.
 **called by** `_insert_above`, `_rewrite_above`
 
 ### `_at_definition(lines: list[str], i: int) -> bool`
-`src/documate/prose.py:500`
+`src/documate/prose.py:555`
 
 True when line `i` is at a scope where a definition can live: not inside a
 parameter list, and not inside a function body.
@@ -286,10 +315,15 @@ doc belongs. A `{` straight after `)` opens a function body even when the
 signature names a struct return type (`static struct s *get(void) {`).
 Delimiters inside strings, chars and comments do not count.
 
+A brace is classified by the declaration it opens, not by the line it sits on:
+Allman/kernel style puts it on its own line (`namespace core\n{`), and reading
+that bare `{` as a function body made every symbol below it in the file
+undocumentable — the whole file, for a codebase that braces this way.
+
 **called by** `_insert_above`, `_rewrite_above`
 
 ### `_code_only(text: str) -> str`
-`src/documate/prose.py:540`
+`src/documate/prose.py:608`
 
 `text` with every C-family comment removed and whitespace collapsed: the part
 of a file a doc edit must leave byte-identical.
@@ -303,7 +337,7 @@ alone. Comments collapse to a space so `a/*x*/b` cannot fuse into `ab`.
 **called by** `_guard_code`
 
 ### `_guard_code(path: Path, before: str, lines: list[str]) -> str | None`
-`src/documate/prose.py:580`
+`src/documate/prose.py:648`
 
 Write `lines` to `path` only when doing so changes comments and nothing else.
 
@@ -316,7 +350,7 @@ work order fails loudly instead.
 **called by** `_insert_above`, `_rewrite_above`  ·  **calls** `_code_only`
 
 ### `_rewrite_above(ctx: Context, row: dict, text: str, shifts: dict) -> str | None`
-`src/documate/prose.py:595`
+`src/documate/prose.py:663`
 
 Replace (or, when absent, insert) the Doxygen doc comment above a C-family
 declaration. Locates the decl by its recorded line — shift-corrected for earlier
@@ -328,10 +362,10 @@ declaration is deleted on the way — the rewrite self-heals that damage instead
 upgrading it in place. Nothing is written when the decl can't be located or the
 draft is empty.
 
-**called by** `_insert`  ·  **calls** `_at_definition`, `_decl_start`, `_doxygen_block`, `_find_decl`, `_guard_code`, `_wedged_spans`
+**called by** `_insert`  ·  **calls** `_at_definition`, `_decl_start`, `_doxygen_block`, `_find_decl`, `_guard_code`, `_name_re`, `_wedged_spans`
 
 ### `_insert_module(ctx: Context, row: dict, text: str, shifts: dict | None=None) -> str | None`
-`src/documate/prose.py:647`
+`src/documate/prose.py:717`
 
 Insert `text` as the module's top-of-file prose: a comment block directly
 above a Go `package` clause, a docstring as a Python file's first statement
@@ -341,7 +375,7 @@ any other doc-above file (after a shebang).
 **called by** `_insert`  ·  **calls** `_comment`, `_comment_prefix`, `_doxygen_block`
 
 ### `_insert_go(ctx: Context, row: dict, text: str) -> str | None`
-`src/documate/prose.py:714`
+`src/documate/prose.py:786`
 
 Insert `text` as a Go doc comment: find the declaration (the recorded
 line, re-located by name if it shifted), write the `//` block directly
@@ -350,7 +384,7 @@ above.
 **called by** `_insert`  ·  **calls** `_comment`, `_go_def_re`, `_locate`
 
 ### `_insert_above(ctx: Context, row: dict, text: str, shifts: dict) -> str | None`
-`src/documate/prose.py:735`
+`src/documate/prose.py:809`
 
 Insert `text` as a doc comment above the declaration in any doc-above
 language (C family, Rust, JS/TS, shell, …). There is no per-language
@@ -359,10 +393,10 @@ through `shifts` — the lines earlier inserts in this run added above it —
 and the symbol's name must appear on (or within two lines of) the landing
 line, else nothing is written.
 
-**called by** `_insert`  ·  **calls** `_at_definition`, `_comment`, `_comment_prefix`, `_decl_start`, `_doxygen_block`, `_find_decl`, `_guard_code`
+**called by** `_insert`  ·  **calls** `_at_definition`, `_comment`, `_comment_prefix`, `_decl_start`, `_doxygen_block`, `_find_decl`, `_guard_code`, `_name_re`
 
 ### `_insert_py(ctx: Context, row: dict, text: str) -> str | None`
-`src/documate/prose.py:782`
+`src/documate/prose.py:857`
 
 Insert `text` as a Python docstring: find the def line, walk to the end
 of the signature, indent to the body, write.
@@ -370,7 +404,7 @@ of the signature, indent to the body, write.
 **called by** `_insert`  ·  **calls** `_def_re`, `_locate`
 
 ### `_stream(argv: list[str], prompt: str, cwd, timeout: int, on_text, on_think=None, meter: _Spend | None=None, procs: set | None=None) -> tuple[int, str, str, bool]`
-`src/documate/prose.py:824`
+`src/documate/prose.py:899`
 
 Run one model call, delivering its reply incrementally: each stdout line
 that is a stream-json `text_delta` event (or any non-JSON line — the test
@@ -391,12 +425,12 @@ agentic path keeps thinking; repairs are judgment work.
 **called by** `_lane`  ·  **calls** `_Spend.delta`, `_Spend.message`, `_Spend.settle`
 
 ### `_kill()`
-`src/documate/prose.py:862`
+`src/documate/prose.py:937`
 
 Timer callback: mark the call timed out and kill the model process.
 
 ### `_lanes(rows: list[dict]) -> list[list[dict]]`
-`src/documate/prose.py:917`
+`src/documate/prose.py:992`
 
 File-disjoint lanes for concurrent drafting: rows grouped by file (a
 file's symbol orders and its trailing module order stay together, in
@@ -407,7 +441,7 @@ line numbers.
 **called by** `_draft_batch`, `_preflight`
 
 ### `_draft_batch(ctx: Context, rows: list[dict], briefs_dir: Path, model: str, timeout: int, cmd: list[str] | None, spend: _Spend, touched: set | None=None, budget: float | None=None) -> int`
-`src/documate/prose.py:934`
+`src/documate/prose.py:1009`
 
 The batched single-turn path for undocumented symbols and modules: one
 model call per _BATCH briefs, up to _WORKERS calls in flight at once over
@@ -424,14 +458,14 @@ in-flight call, accounts for what landed, then propagates.
 **called by** `fix_check`, `fix_docs`, `fix_rewrite`  ·  **calls** `_lanes`, `_show`, `_tally`, `_totals_line`
 
 ### `_show() -> None`
-`src/documate/prose.py:969`
+`src/documate/prose.py:1044`
 
 Re-render the spinner: current phase, then the live spend.
 
 **called by** `_absorb`, `_draft_batch`, `_think`  ·  **calls** `_Spend.label`
 
 ### `_lane(lane_rows: list[dict]) -> None`
-`src/documate/prose.py:976`
+`src/documate/prose.py:1051`
 
 Drive one lane: its chunks run serially, so this lane's files only
 ever see one writer, and the per-file line shifts stay coherent.
@@ -439,21 +473,21 @@ ever see one writer, and the per-file line shifts stay coherent.
 **calls** `_Spend.spent`, `_absorb`, `_batch_prompt`, `_cmd_text`, `_stream`, `_tally`
 
 ### `_think() -> None`
-`src/documate/prose.py:998`
+`src/documate/prose.py:1073`
 
 First thinking delta: the silence is reasoning, say so.
 
 **calls** `_show`
 
 ### `_absorb(text_chunk: str) -> None`
-`src/documate/prose.py:1004`
+`src/documate/prose.py:1079`
 
 Fold in the chunk; insert and announce any completed block.
 
 **called by** `_lane`  ·  **calls** `_clean`, `_insert`, `_show`
 
 ### `_totals_line(totals: dict, spend: _Spend) -> None`
-`src/documate/prose.py:1104`
+`src/documate/prose.py:1179`
 
 The run-total header every drafting path (and its interrupt) ends with —
 what landed is always accounted for, even when the run didn't finish. The
@@ -461,8 +495,32 @@ spend joins it when measured, so the spinner's meter outlives the spinner.
 
 **called by** `_draft`, `_draft_batch`  ·  **calls** `_Spend.label`
 
+### `_insertable(file: str) -> bool`
+`src/documate/prose.py:1192`
+
+Can documate write a doc into this file itself? Python (docstring under the
+signature), Go, and every doc-above comment language (`_comment_prefix`).
+
+**called by** `_supported`  ·  **calls** `_comment_prefix`
+
+### `_supported(index: list[dict]) -> list[dict]`
+`src/documate/prose.py:1198`
+
+The work orders documate can carry out itself, dropping — loudly, once per
+language — the docstring orders it cannot.
+
+A file in a language with no known doc-comment style has no deterministic
+insert, and the only way to serve its order would be to hand the model
+Read+Edit and hope: unguarded edits to source documate cannot even read the
+result back from, so the symbol reads as undocumented next run and is drafted
+again forever. Refusing is the honest outcome — the symbol stays uncovered,
+which is true, instead of the file being rewritten by a model nobody watched.
+Drift repairs are unaffected: they edit authored pages, not source.
+
+**called by** `fix_check`, `fix_docs`  ·  **calls** `_insertable`
+
 ### `_split(index: list[dict]) -> tuple[list[dict], list[dict]]`
-`src/documate/prose.py:1117`
+`src/documate/prose.py:1229`
 
 (batchable, agentic) work orders: undocumented symbols, modules, and
 C-family rewrites in any language documate can insert into deterministically
@@ -472,7 +530,7 @@ path; drift repairs and anything else keep the in-place agent.
 **called by** `_preflight`, `fix_check`, `fix_docs`  ·  **calls** `_comment_prefix`
 
 ### `_snapshot(ctx: Context, row: dict) -> dict[str, str]`
-`src/documate/prose.py:1132`
+`src/documate/prose.py:1244`
 
 {relpath: content} of the work order's target files (the source file, and
 the authored page for drift rows) before the model runs — the baseline the
@@ -481,8 +539,29 @@ every edit is expected to land.
 
 **called by** `_draft`
 
+### `_dirty(ctx: Context) -> dict[str, str]`
+`src/documate/prose.py:1261`
+
+{relpath: sha1} of every file git currently reports as modified or untracked
+— a fingerprint of the working tree bounded by how dirty it is, not by repo
+size. Empty when git can't answer: this is a safety net, never a dependency.
+
+**called by** `_draft`, `_stray`
+
+### `_stray(ctx: Context, row: dict, before: dict[str, str]) -> list[str]`
+`src/documate/prose.py:1288`
+
+Files the agentic call changed that its work order never named.
+
+The agentic path is the model editing the repo in place, so nothing but this
+bounds where its edits land — and files outside the order are not in the undo
+manifest (`undo.snapshot` records the order's targets), so `--undo` cannot take
+them back. Naming them is what makes `git checkout` possible.
+
+**called by** `_draft`  ·  **calls** `_dirty`
+
 ### `_tally(ctx: Context, before: dict[str, str], totals: dict) -> None`
-`src/documate/prose.py:1149`
+`src/documate/prose.py:1301`
 
 Fold what the model just changed in the snapshotted files into the run
 totals (counted even for a failed/timed-out/interrupted call — a partial
@@ -492,7 +571,7 @@ draft once, as its ✓ line; the full text belongs to `git diff`.
 **called by** `_draft`, `_draft_batch`, `_lane`
 
 ### `_draft(ctx: Context, index: list[dict], briefs_dir: Path, model: str, timeout: int, cmd: list[str] | None, spend: _Spend, touched: set | None=None, budget: float | None=None) -> int`
-`src/documate/prose.py:1174`
+`src/documate/prose.py:1326`
 
 Feed each work order to the model (brief on stdin, repo as cwd), showing
 live progress. With a `budget`, no new call starts once the settled spend
@@ -500,19 +579,21 @@ reaches it — the remainder is reported, not failed. — the in-flight brief on
 far), one ✓/✗ line per outcome. Each call's result JSON settles the meter.
 Ends with a run total. Returns the number of failures; a missing claude CLI
 fails every order with one clear hint instead of a stack trace, and Ctrl-C
-shows any partial edit of the interrupted order before propagating.
+shows any partial edit of the interrupted order before propagating. This is
+the model editing files in place, so every call is checked against the
+working tree and edits outside the order are named (`_stray`).
 
-**called by** `fix_check`, `fix_docs`  ·  **calls** `_Spend.label`, `_Spend.settle`, `_Spend.spent`, `_cmd`, `_snapshot`, `_tally`, `_totals_line`
+**called by** `fix_check`, `fix_docs`  ·  **calls** `_Spend.label`, `_Spend.settle`, `_Spend.spent`, `_cmd`, `_dirty`, `_snapshot`, `_stray`, `_tally`
 
 ### `_tok(n: int) -> str`
-`src/documate/prose.py:1256`
+`src/documate/prose.py:1422`
 
 A token count as a compact human number (874 → '874', 1934 → '1.9k').
 
 **called by** `_Spend.label`, `_preflight`
 
 ### `_preflight(ctx: Context, index: list[dict], briefs_dir: Path, model: str, yes: bool, budget: float | None=None) -> bool | None`
-`src/documate/prose.py:1261`
+`src/documate/prose.py:1427`
 
 No model call starts unannounced: show exactly what --ai is about to do
 — every symbol, every file, how many calls, and a token estimate measured
@@ -525,7 +606,7 @@ opted into).
 **called by** `_dry_run`, `fix_check`, `fix_docs`, `fix_rewrite`  ·  **calls** `_batch_prompt`, `_lanes`, `_split`, `_tok`
 
 ### `_only(index: list[dict], pattern: str | None) -> list[dict]`
-`src/documate/prose.py:1340`
+`src/documate/prose.py:1506`
 
 The work orders whose repo-relative file (or authored page, for drift rows)
 matches the `--only` glob — fnmatch, so `*` crosses directories — leaving the
@@ -536,7 +617,7 @@ filter dropped, so a too-narrow glob is visible instead of a silent no-op.
 **called by** `fix_check`, `fix_docs`, `fix_rewrite`
 
 ### `_dry_run(ctx: Context, capped: list[dict], bdir: Path, model: str, budget: float | None=None) -> None`
-`src/documate/prose.py:1359`
+`src/documate/prose.py:1525`
 
 `--dry-run`: show exactly what the run would do — the same pre-flight plan a
 real run confirms, work orders already on disk under `bdir` for inspection —
@@ -545,14 +626,14 @@ then stop. No model call, no source edit.
 **called by** `fix_check`, `fix_docs`, `fix_rewrite`  ·  **calls** `_preflight`
 
 ### `_capped(index: list[dict]) -> list[dict]`
-`src/documate/prose.py:1376`
+`src/documate/prose.py:1542`
 
 The first _CAP work orders; prints how many remain when truncated.
 
 **called by** `fix_check`, `fix_docs`, `fix_rewrite`
 
 ### `fix_check(ctx: Context, base: str | None, model: str, timeout: int=_TIMEOUT, cmd: list[str] | None=None, yes: bool=False, quiet: bool=False, only: str | None=None, dry: bool=False, budget: float | None=None) -> int`
-`src/documate/prose.py:1387`
+`src/documate/prose.py:1553`
 
 `documate --check --ai`: run the gate, show the pre-flight plan and get
 consent, draft every emitted work order, regenerate the docs (drafted
@@ -565,7 +646,7 @@ is internal plumbing: a pass collapses to one line, failures stay loud.
 **calls** `_Spend`, `_capped`, `_draft`, `_draft_batch`, `_dry_run`, `_interrupted`, `_only`, `_preflight`
 
 ### `_run_format(ctx: Context, touched: set[str]) -> None`
-`src/documate/prose.py:1447`
+`src/documate/prose.py:1613`
 
 Run the repo's configured `format_cmd` over the source files a run touched,
 before the re-index reads them — inserted doc comments then land already
@@ -577,7 +658,7 @@ and never sinks the run — the drafts are already on disk.
 **called by** `fix_check`, `fix_docs`, `fix_rewrite`
 
 ### `_reindex(ctx: Context) -> None`
-`src/documate/prose.py:1470`
+`src/documate/prose.py:1636`
 
 Best-effort incremental re-index after drafting: inserted doc lines
 shifted every declaration below them, and line-anchored extraction (the
@@ -588,7 +669,7 @@ must never crash a run whose tokens are already spent.
 **called by** `fix_check`, `fix_docs`, `fix_rewrite`
 
 ### `_interrupted() -> int`
-`src/documate/prose.py:1482`
+`src/documate/prose.py:1648`
 
 The Ctrl-C epilogue: partial drafts were already shown and stay as
 uncommitted edits; say how to review, discard, or resume, and exit 130
@@ -597,7 +678,7 @@ uncommitted edits; say how to review, discard, or resume, and exit 130
 **called by** `fix_check`, `fix_docs`, `fix_rewrite`
 
 ### `fix_docs(ctx: Context, model: str, timeout: int=_TIMEOUT, cmd: list[str] | None=None, yes: bool=False, only: str | None=None, dry: bool=False, budget: float | None=None) -> int`
-`src/documate/prose.py:1494`
+`src/documate/prose.py:1660`
 
 `documate --ai`: the fresh-repo seeding pass. Generate the pages, show
 the pre-flight plan and get consent, draft a docstring for every
@@ -610,7 +691,7 @@ themselves are uncommitted edits awaiting review.
 **calls** `_Spend`, `_capped`, `_draft`, `_draft_batch`, `_dry_run`, `_interrupted`, `_only`, `_preflight`
 
 ### `fix_rewrite(ctx: Context, model: str, timeout: int=_TIMEOUT, cmd: list[str] | None=None, yes: bool=False, only: str | None=None, dry: bool=False, budget: float | None=None) -> int`
-`src/documate/prose.py:1561`
+`src/documate/prose.py:1730`
 
 `documate --ai <model> --rewrite`: re-emit every C/C++ symbol's doc comment
 as Doxygen (`/** */` with `@brief`/`@param`/`@return`) — the marker Doxygen reads,

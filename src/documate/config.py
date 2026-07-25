@@ -29,6 +29,8 @@ drop a default (`"!/vendor/"` un-skips vendor/).
                    checkout, worktree-safe via the git common dir)
     format_cmd     command --ai runs over the source files it touched, paths
                    appended ("clang-format -i"); None skips formatting
+    doc_width      column limit --ai wraps drafted doc comments to (100); the
+                   comment markers and indentation count toward it
 
 Unknown config keys are a hard error — a typo silently doing nothing is the exact rot
 documate exists to stop. Stdlib only.
@@ -83,6 +85,9 @@ _DEFAULTS = {
     # shell-style command --ai runs over the files it touched (paths appended),
     # e.g. "clang-format -i" — inserted docs then meet the repo's format gate.
     "format_cmd": None,
+    # column limit drafted doc comments wrap to. A model writes one long line;
+    # unwrapped it trips the column gate of every C codebase that has one.
+    "doc_width": 100,
 }
 
 _CONFIG_NAMES = ("documate.config.json", ".documate.config.json")
@@ -100,6 +105,7 @@ class Config:
     default_base: str
     project_name: str | None = field(default=None)
     format_cmd: str | None = field(default=None)
+    doc_width: int = field(default=100)
     source: Path | None = field(default=None)
 
 
@@ -136,6 +142,15 @@ def scaffold(root: Path) -> Path | None:
     return path
 
 
+def _width(value, src: Path | None) -> int:
+    """`doc_width` as a usable column limit. A width narrower than the comment
+    markers themselves can't wrap anything, so a nonsense value is a hard error
+    like an unknown key — not a silent fallback that quietly stops wrapping."""
+    if not isinstance(value, int) or isinstance(value, bool) or value < 20:
+        raise ValueError(f"{src or 'config'}: doc_width must be an integer >= 20")
+    return value
+
+
 def load_config(root: Path) -> Config:
     """Merge the override file (if any) over the defaults and resolve to a Config."""
     raw = dict(_DEFAULTS)
@@ -167,5 +182,6 @@ def load_config(root: Path) -> Config:
         default_base=raw["default_base"],
         project_name=raw["project_name"],
         format_cmd=raw["format_cmd"],
+        doc_width=_width(raw["doc_width"], src),
         source=src,
     )
