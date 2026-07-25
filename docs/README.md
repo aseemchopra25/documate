@@ -95,6 +95,6 @@ flowchart LR
 
 ## Hotspots
 
-*Mined from git history as of `e1cb4e3`.*
+*Mined from git history as of `1a3e379`.*
 
 **Most-changed:** [`src/documate/briefs.py`](architecture/src.documate.briefs.md) (5 commits), [`src/documate/extract.py`](architecture/src.documate.extract.md) (5 commits), [`src/documate/prose.py`](architecture/src.documate.prose.md) (5 commits), [`src/documate/site.py`](architecture/src.documate.site.md) (5 commits), [`src/documate/cli.py`](architecture/src.documate.cli.md) (4 commits).
