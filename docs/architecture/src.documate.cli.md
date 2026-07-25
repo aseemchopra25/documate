@@ -21,16 +21,17 @@ binary at any repo or monorepo sub-tree, --base picks the drift ref, --full
 re-indexes from scratch, --html adds the static site, --briefs emits work
 orders whenever the gate runs. --only/--dry-run/--budget aim, preview, and
 cap an --ai run; --undo reverts the last one from its recorded manifest;
+--rewrap-docs reflows over-long doc comments to doc_width with no model at all;
 --list-undocumented prints the missing-docs map as JSON. One Context per
 invocation, no import-time globals. `--watch --ai` is refused: a model call
 on every save is a token faucet — run --ai as a deliberate one-shot.
 
-**depends on** [`src/documate/briefs.py`](src.documate.briefs.md), [`src/documate/check.py`](src.documate.check.md), [`src/documate/config.py`](src.documate.config.md), [`src/documate/core.py`](src.documate.core.md), [`src/documate/docs.py`](src.documate.docs.md), [`src/documate/prose.py`](src.documate.prose.md), [`src/documate/site.py`](src.documate.site.md), [`src/documate/stats.py`](src.documate.stats.md), [`src/documate/ui.py`](src.documate.ui.md), [`src/documate/undo.py`](src.documate.undo.md)
+**depends on** [`src/documate/briefs.py`](src.documate.briefs.md), [`src/documate/check.py`](src.documate.check.md), [`src/documate/config.py`](src.documate.config.md), [`src/documate/core.py`](src.documate.core.md), [`src/documate/docs.py`](src.documate.docs.md), [`src/documate/prose.py`](src.documate.prose.md), [`src/documate/rewrap.py`](src.documate.rewrap.md), [`src/documate/site.py`](src.documate.site.md), [`src/documate/stats.py`](src.documate.stats.md), [`src/documate/ui.py`](src.documate.ui.md), [`src/documate/undo.py`](src.documate.undo.md)
 
 ## API
 
 ### `_index(ctx: Context, full: bool) -> None`
-`src/documate/cli.py:42`
+`src/documate/cli.py:43`
 
 Refresh the graph before anything reads it. Default is incremental-when-a-
 graph-exists: re-parse only what changed since the last build (fast on big repos,
@@ -41,7 +42,7 @@ wait (this is the one silent-slow step), then one line says what it did.
 **called by** `_dispatch`, `_watch`
 
 ### `_snapshot(ctx: Context) -> dict[str, float]`
-`src/documate/cli.py:59`
+`src/documate/cli.py:60`
 
 {tracked file: mtime} — everything that can change the generated docs.
 
@@ -52,7 +53,7 @@ forever. A vanished file drops out of the dict, which is itself a change.
 **called by** `_watch`
 
 ### `_watch(ctx: Context, html: bool) -> int`
-`src/documate/cli.py:85`
+`src/documate/cli.py:86`
 
 `documate --watch` — poll for source changes, regenerate on each one.
 
@@ -67,7 +68,7 @@ every doc page that changed in response — the live terminal view of the docs.
 **called by** `_dispatch`  ·  **calls** `_index`, `_snapshot`
 
 ### `_repo_here() -> bool`
-`src/documate/cli.py:120`
+`src/documate/cli.py:121`
 
 Is the cwd inside a git work tree? Decides whether a bare `documate` can act
 (there's a repo to document) or should explain itself (the help screen).
@@ -75,7 +76,7 @@ Is the cwd inside a git work tree? Decides whether a bare `documate` can act
 **called by** `main`
 
 ### `build_parser() -> argparse.ArgumentParser`
-`src/documate/cli.py:129`
+`src/documate/cli.py:130`
 
 Build the one flat parser: no subcommands, so `documate -h` is the whole
 surface on one screen (rendered through rich-argparse, the one cosmetic
@@ -84,7 +85,7 @@ dependency). The three modes come first, overrides after.
 **called by** `main`
 
 ### `_scaffold(ctx: Context) -> None`
-`src/documate/cli.py:269`
+`src/documate/cli.py:276`
 
 `--init`: write the starter config, then teach the ignore defaults so the
 user knows what's already skipped before they add to it. Never clobbers an
@@ -95,7 +96,7 @@ follow see exactly what they would have without it.
 **called by** `_dispatch`
 
 ### `_dispatch(args) -> int`
-`src/documate/cli.py:286`
+`src/documate/cli.py:293`
 
 Route one parsed invocation: index first (every mode reads the graph), then
 the mode — gate only (--check), the model layer (--ai), or the default job:
@@ -105,7 +106,7 @@ gate on purpose: it's a dev loop, and gating every save would be noise.
 **called by** `main`  ·  **calls** `_index`, `_scaffold`, `_watch`
 
 ### `main(argv=None) -> int`
-`src/documate/cli.py:362`
+`src/documate/cli.py:371`
 
 Console entry point: parse argv, dispatch, return the exit code.
 

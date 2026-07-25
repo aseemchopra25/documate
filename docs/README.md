@@ -1,7 +1,7 @@
 <!-- generated documentation — edit the source, not this file -->
 # documate
 
-**20 subsystems · 280/280 symbols documented (100%)**
+**21 subsystems · 296/296 symbols documented (100%)**
 
 **Start here:** [`src/documate/cli.py`](architecture/src.documate.cli.md) — the door into the codebase (nothing else imports it).
 
@@ -15,6 +15,7 @@ flowchart LR
   briefs --> extract
   briefs --> prose
   briefs --> resolve
+  briefs --> ui
   check --> anchors
   check --> briefs
   check --> core
@@ -27,6 +28,7 @@ flowchart LR
   cli --> core
   cli --> docs
   cli --> prose
+  cli --> rewrap
   cli --> site
   cli --> stats
   cli --> ui
@@ -49,6 +51,12 @@ flowchart LR
   prose --> ui
   prose --> undo
   resolve --> core
+  rewrap --> core
+  rewrap --> docs
+  rewrap --> extract
+  rewrap --> prose
+  rewrap --> ui
+  rewrap --> undo
   site --> core
   site --> docs
   site --> ui
@@ -79,6 +87,7 @@ flowchart LR
 | [`src/documate/graphdb.py`](architecture/src.documate.graphdb.md) | graphdb.py — documate's only door to the code graph. |
 | [`src/documate/prose.py`](architecture/src.documate.prose.md) | prose.py — the opt-in model layer: drive Claude over the work orders. |
 | [`src/documate/resolve.py`](architecture/src.documate.resolve.md) | resolve.py — turn a doc anchor into the concrete code it names, or fail loudly. |
+| [`src/documate/rewrap.py`](architecture/src.documate.rewrap.md) | rewrap.py — reflow doc comments already in the source to `doc_width`. |
 | [`src/documate/site.py`](architecture/src.documate.site.md) | site.py — `documate --html`: the same docs, rendered as a static site. |
 | [`src/documate/stats.py`](architecture/src.documate.stats.md) | stats.py — `documate --stats`: the documentation dashboard. |
 | [`src/documate/ui.py`](architecture/src.documate.ui.md) | ui.py — one voice for everything documate says. |
@@ -86,6 +95,6 @@ flowchart LR
 
 ## Hotspots
 
-*Mined from git history as of `bcbbf57`.*
+*Mined from git history as of `1a3e379`.*
 
-**Most-changed:** [`src/documate/site.py`](architecture/src.documate.site.md) (5 commits), [`src/documate/briefs.py`](architecture/src.documate.briefs.md) (4 commits), [`src/documate/extract.py`](architecture/src.documate.extract.md) (4 commits), [`src/documate/prose.py`](architecture/src.documate.prose.md) (4 commits), [`src/documate/cli.py`](architecture/src.documate.cli.md) (3 commits).
+**Most-changed:** [`src/documate/briefs.py`](architecture/src.documate.briefs.md) (5 commits), [`src/documate/extract.py`](architecture/src.documate.extract.md) (5 commits), [`src/documate/prose.py`](architecture/src.documate.prose.md) (5 commits), [`src/documate/site.py`](architecture/src.documate.site.md) (5 commits), [`src/documate/cli.py`](architecture/src.documate.cli.md) (4 commits).

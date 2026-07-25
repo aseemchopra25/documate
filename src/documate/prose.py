@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import difflib
 import fnmatch
+import hashlib
 import json
 import os
 import re
@@ -254,6 +255,16 @@ def _clean(text: str) -> str:
     return t
 
 
+def _name_re(name: str) -> re.Pattern:
+    """The symbol's name as a whole-word pattern.
+
+    `\\b` before the name is wrong for a C++ destructor: `~ScopedLock` starts with a
+    non-word character, so there is no boundary between it and the space before it
+    and the name never matches its own declaration. A lookbehind for an identifier
+    character is the boundary that holds for both."""
+    return re.compile(rf"(?<![A-Za-z0-9_]){re.escape(name)}\b")
+
+
 def _def_re(name: str) -> re.Pattern:
     """The definition-line pattern for a Python symbol (def/async def/class)."""
     return re.compile(rf"^\s*(?:async\s+def|def|class)\s+{re.escape(name)}\b")
@@ -269,7 +280,8 @@ def _go_def_re(name: str) -> re.Pattern:
 
 # languages whose doc convention is a comment block directly above the
 # declaration — the styles extract.doc_above reads back. `//` for the C
-# family / Rust / Java-Kotlin-Swift / JS-TS, `#` for shell (extract._HASH_DOCS).
+# family / Rust / Java-Kotlin-Swift / JS-TS, `#` for shell (extract._HASH_DOCS),
+# `--` for Lua (extract._DASH_DOCS).
 _SLASH_DOCS = (
     ".c",
     ".h",
@@ -299,6 +311,8 @@ def _comment_prefix(file: str) -> str | None:
         return "//"
     if file.endswith(extract._HASH_DOCS):
         return "#"
+    if file.endswith(extract._DASH_DOCS):
+        return "--"
     return None
 
 
@@ -338,25 +352,63 @@ def _insert(
     return _insert_above(ctx, row, text, shifts if shifts is not None else {})
 
 
-def _comment(text: str, ind: str, prefix: str = "//") -> str:
+def _rewrap(lines: list[str], room: int) -> list[str]:
+    """`lines` reflowed to `room` columns of text, blank lines and structure kept.
+
+    A model writes its draft as one long line; unwrapped, that lands as a
+    200-column comment in a codebase whose format gate stops at 100. Wrapping is
+    per line so a deliberate break (a blank line, a bullet) survives, and a
+    Doxygen command starts its own line — `@param x ...` must never get another
+    line's tail folded onto it, which would change what Doxygen reads. A word
+    longer than `room` (a URL, a long identifier) is left over-long rather than
+    broken: a split identifier is worse than a long line."""
+    out: list[str] = []
+    for ln in lines:
+        if not ln.strip():
+            out.append("")
+            continue
+        cont = "  " if ln.lstrip().startswith(("@", "\\", "-", "*")) else ""
+        buf = ""
+        for word in ln.split():
+            cand = f"{buf} {word}".strip() if buf else word
+            if buf and len(cand) + (len(cont) if out and buf else 0) > room:
+                out.append(buf)
+                buf = cont + word
+            else:
+                buf = cand
+        if buf:
+            out.append(buf)
+    return out
+
+
+def _comment(text: str, ind: str, prefix: str = "//", width: int = 0) -> str:
     """`text` as a `prefix` comment block at `ind`entation — markers a model
     added despite instructions stripped, so they can't double up. Any draft
-    embeds safely: a line marker has no closing delimiter to collide with."""
-    block = ""
+    embeds safely: a line marker has no closing delimiter to collide with.
+    `width` (0 = don't) wraps to that column counting indent and marker."""
+    body: list[str] = []
     for ln in text.splitlines():
         ln = ln.strip()
         if ln.startswith(prefix):
             ln = ln[len(prefix) :].strip()
+        body.append(ln)
+    if width:
+        body = _rewrap(
+            body, max(width - len(ind.expandtabs(8)) - len(prefix) - 1, 20)
+        )
+    block = ""
+    for ln in body:
         block += f"{ind}{prefix} {ln}".rstrip() + "\n"
     return block
 
 
-def _doxygen_block(text: str, ind: str) -> str | None:
+def _doxygen_block(text: str, ind: str, width: int = 0) -> str | None:
     """`text` as a Doxygen `/** ... */` block at `ind`entation — the marker Doxygen
     reads, unlike the plain `//` other doc-above inserts use. Any wrapper the model
     added despite instructions (`/**`, `*/`, a leading `*`) is stripped so markers
     can't double up; a blank interior line becomes a lone ` *`. None when nothing
-    but markers survives — an empty `/** */` would read as undocumented."""
+    but markers survives — an empty `/** */` would read as undocumented.
+    `width` (0 = don't) wraps to that column counting indent and the ` * ` lead."""
     body: list[str] = []
     for ln in text.splitlines():
         ln = ln.strip()
@@ -374,6 +426,9 @@ def _doxygen_block(text: str, ind: str) -> str | None:
         body.pop()
     if not body:
         return None
+    if width:
+        # tabs are 8 columns to the format gates this targets, not 1 char
+        body = _rewrap(body, max(width - len(ind.expandtabs(8)) - 3, 20))
     block = f"{ind}/**\n"
     for ln in body:
         block += f"{ind} * {ln}".rstrip() + "\n"
@@ -385,7 +440,7 @@ def _doxygen_block(text: str, ind: str) -> str | None:
 _DECL_PREFIX_MAX = 4
 
 #: a line that is nothing but type/qualifier words and pointer stars, e.g.
-#: `static enum uwb_err`, `struct session_ctx *`, `CHIP_ERROR`, `*`.
+#: `static enum parse_err`, `struct session_ctx *`, `CHIP_ERROR`, `*`.
 #: Anything carrying punctuation that opens or ends a statement is excluded, so
 #: the walk can never cross `;`, `{`, `}`, `(`, `=`, a comment or a directive.
 _DECL_PREFIX = re.compile(r"^[A-Za-z_][A-Za-z0-9_ \t*]*$|^\*+$")
@@ -406,8 +461,8 @@ def _decl_start(lines: list[str], i: int) -> int:
     C and C++ routinely break a declaration after the return type, which is the
     house style across the Linux kernel and Zephyr:
 
-        static enum uwb_err
-        parse_session_attribute(struct uwb_msg_attribute *attr, ...)
+        static enum parse_err
+        parse_session_attribute(struct msg_attribute *attr, ...)
 
     Inserting directly above the name line puts the comment *inside* the
     declaration, where Doxygen and `extract.doc_above` both stop seeing it — the
@@ -508,11 +563,17 @@ def _at_definition(lines: list[str], i: int) -> bool:
     Member scopes are allowed through: a struct or class body is where a member's
     doc belongs. A `{` straight after `)` opens a function body even when the
     signature names a struct return type (`static struct s *get(void) {`).
-    Delimiters inside strings, chars and comments do not count."""
+    Delimiters inside strings, chars and comments do not count.
+
+    A brace is classified by the declaration it opens, not by the line it sits on:
+    Allman/kernel style puts it on its own line (`namespace core\\n{`), and reading
+    that bare `{` as a function body made every symbol below it in the file
+    undocumentable — the whole file, for a codebase that braces this way."""
     paren = 0
     scopes: list[bool] = []  # per open brace: True when it opened a member scope
     in_block = False
     last = ""  # last non-space code char before the brace being classified
+    head = ""  # code since the last ; { } — the declaration a brace would open
     for ln in lines[:i]:
         if in_block:
             if "*/" not in ln:
@@ -525,15 +586,22 @@ def _at_definition(lines: list[str], i: int) -> bool:
         if "/*" in s:
             s, in_block = s.split("/*", 1)[0], True
         s = re.sub(r"//.*", "", s)
-        member = bool(_MEMBER_SCOPE.search(s))
         paren += s.count("(") - s.count(")")
         for ch in s:
             if ch == "{":
-                scopes.append(member and last != ")")
-            elif ch == "}" and scopes:
-                scopes.pop()
+                scopes.append(bool(_MEMBER_SCOPE.search(head)) and last != ")")
+                head = ""
+            elif ch == "}":
+                if scopes:
+                    scopes.pop()
+                head = ""
+            elif ch == ";":
+                head = ""
+            else:
+                head += ch
             if not ch.isspace():
                 last = ch
+        head += " "  # a line break separates tokens: `namespace X` / `{`
     return paren <= 0 and all(scopes)
 
 
@@ -613,7 +681,7 @@ def _rewrite_above(ctx: Context, row: dict, text: str, shifts: dict) -> str | No
     if not isinstance(at, int):
         return "no recorded line"
     off = sum(n for pos, n in shifts.get(row["file"], ()) if pos <= at)
-    word = re.compile(rf"\b{re.escape(name)}\b")
+    word = _name_re(name)
     i = _find_decl(lines, at + off, word)
     if i is None:
         return "definition not found"
@@ -625,7 +693,9 @@ def _rewrite_above(ctx: Context, row: dict, text: str, shifts: dict) -> str | No
     for a, b in reversed(_wedged_spans(lines, decl, i)):
         del lines[a : b + 1]
         delta -= b - a + 1
-    block = _doxygen_block(text, re.match(r"\s*", lines[decl]).group(0))
+    block = _doxygen_block(
+        text, re.match(r"\s*", lines[decl]).group(0), ctx.config.doc_width
+    )
     if block is None:
         return "empty draft"
     span = extract.doc_span(lines, decl)
@@ -666,7 +736,7 @@ def _insert_module(
         prev = lines[i - 1].strip() if i else ""
         if prev.startswith("//") or prev.endswith("*/"):
             return "already documented"
-        lines.insert(i, _comment(text, ""))
+        lines.insert(i, _comment(text, "", width=ctx.config.doc_width))
     elif prefix:
         # first-symbol line (shift-corrected) disambiguates exactly as the
         # brief's emitter did: a top comment adjacent to it is the symbol's
@@ -682,11 +752,13 @@ def _insert_module(
         if row["file"].endswith(extract.CFAMILY):
             # the name stays alone on its line: `\file` takes a single word, and
             # anything glued to it would change the file Doxygen credits.
-            block = _doxygen_block(f"@file {Path(row['file']).name}\n{text}", "")
+            block = _doxygen_block(
+                f"@file {Path(row['file']).name}\n{text}", "", ctx.config.doc_width
+            )
             if block is None:
                 return "empty draft"
         else:
-            block = _comment(text, "", prefix)
+            block = _comment(text, "", prefix, ctx.config.doc_width)
         lines.insert(i, block)
     else:
         if '"""' in text:
@@ -727,7 +799,9 @@ def _insert_go(ctx: Context, row: dict, text: str) -> str | None:
     prev = lines[i - 1].strip() if i else ""
     if prev.startswith("//") or prev.endswith("*/"):
         return "already documented"
-    lines.insert(i, _comment(text, re.match(r"\s*", lines[i]).group(0)))
+    lines.insert(
+        i, _comment(text, re.match(r"\s*", lines[i]).group(0), width=ctx.config.doc_width)
+    )
     path.write_text("".join(lines), encoding="utf-8")
     return None
 
@@ -751,7 +825,7 @@ def _insert_above(ctx: Context, row: dict, text: str, shifts: dict) -> str | Non
     if not isinstance(at, int):
         return "no recorded line"
     off = sum(n for pos, n in shifts.get(row["file"], ()) if pos <= at)
-    word = re.compile(rf"\b{re.escape(name)}\b")
+    word = _name_re(name)
     i = _find_decl(lines, at + off, word)
     if i is None:
         return "definition not found"
@@ -760,12 +834,13 @@ def _insert_above(ctx: Context, row: dict, text: str, shifts: dict) -> str | Non
         if not _at_definition(lines, i):
             return "landing line is not a definition"
         i = _decl_start(lines, i)
-    if extract.doc_above(lines, i, hash_ok=prefix == "#"):
+    if extract.doc_above(lines, i, hash_ok=prefix == "#", dash_ok=prefix == "--"):
         return "already documented"
     ind = re.match(r"\s*", lines[i]).group(0)
     # Doxygen reads `/** */`, never a `//` run: a line comment here would leave
     # the symbol undocumented in the very tool the language documents with.
-    block = _doxygen_block(text, ind) if cfamily else _comment(text, ind, prefix)
+    w = ctx.config.doc_width
+    block = _doxygen_block(text, ind, w) if cfamily else _comment(text, ind, prefix, w)
     if block is None:
         return "empty draft"
     lines.insert(i, block)
@@ -1114,6 +1189,43 @@ def _totals_line(totals: dict, spend: _Spend) -> None:
         )
 
 
+def _insertable(file: str) -> bool:
+    """Can documate write a doc into this file itself? Python (docstring under the
+    signature), Go, and every doc-above comment language (`_comment_prefix`)."""
+    return file.endswith(".py") or _comment_prefix(file) is not None
+
+
+def _supported(index: list[dict]) -> list[dict]:
+    """The work orders documate can carry out itself, dropping — loudly, once per
+    language — the docstring orders it cannot.
+
+    A file in a language with no known doc-comment style has no deterministic
+    insert, and the only way to serve its order would be to hand the model
+    Read+Edit and hope: unguarded edits to source documate cannot even read the
+    result back from, so the symbol reads as undocumented next run and is drafted
+    again forever. Refusing is the honest outcome — the symbol stays uncovered,
+    which is true, instead of the file being rewritten by a model nobody watched.
+    Drift repairs are unaffected: they edit authored pages, not source."""
+    keep: list[dict] = []
+    dropped: dict[str, int] = {}
+    for r in index:
+        if r["kind"] in ("undocumented", "module", "rewrite") and not _insertable(
+            r["file"]
+        ):
+            sfx = Path(r["file"]).suffix or "(no suffix)"
+            dropped[sfx] = dropped.get(sfx, 0) + 1
+        else:
+            keep.append(r)
+    if dropped:
+        detail = ", ".join(f"{n} × {sfx}" for sfx, n in sorted(dropped.items()))
+        ui.warn(
+            f"fix: skipping {sum(dropped.values())} work order(s) in unsupported "
+            f"language(s) ({detail}) — documate has no doc-comment style for them, "
+            "so it will not let the model edit those files"
+        )
+    return keep
+
+
 def _split(index: list[dict]) -> tuple[list[dict], list[dict]]:
     """(batchable, agentic) work orders: undocumented symbols, modules, and
     C-family rewrites in any language documate can insert into deterministically
@@ -1144,6 +1256,46 @@ def _snapshot(ctx: Context, row: dict) -> dict[str, str]:
         except OSError:
             snap[rel] = ""
     return snap
+
+
+def _dirty(ctx: Context) -> dict[str, str]:
+    """{relpath: sha1} of every file git currently reports as modified or untracked
+    — a fingerprint of the working tree bounded by how dirty it is, not by repo
+    size. Empty when git can't answer: this is a safety net, never a dependency."""
+    try:
+        r = subprocess.run(
+            ["git", "status", "--porcelain", "-uall", "-z"],
+            cwd=ctx.root,
+            capture_output=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if r.returncode != 0:
+        return {}
+    out: dict[str, str] = {}
+    for entry in r.stdout.decode(errors="replace").split("\0"):
+        rel = entry[3:]
+        if not rel:
+            continue
+        try:
+            out[rel] = hashlib.sha1((ctx.root / rel).read_bytes()).hexdigest()
+        except OSError:
+            continue
+    return out
+
+
+def _stray(ctx: Context, row: dict, before: dict[str, str]) -> list[str]:
+    """Files the agentic call changed that its work order never named.
+
+    The agentic path is the model editing the repo in place, so nothing but this
+    bounds where its edits land — and files outside the order are not in the undo
+    manifest (`undo.snapshot` records the order's targets), so `--undo` cannot take
+    them back. Naming them is what makes `git checkout` possible."""
+    targets = {row[k] for k in ("file", "page") if row.get(k)}
+    now = _dirty(ctx)
+    changed = {p for p in set(now) | set(before) if now.get(p) != before.get(p)}
+    return sorted(changed - targets)
 
 
 def _tally(ctx: Context, before: dict[str, str], totals: dict) -> None:
@@ -1188,7 +1340,9 @@ def _draft(
     far), one ✓/✗ line per outcome. Each call's result JSON settles the meter.
     Ends with a run total. Returns the number of failures; a missing claude CLI
     fails every order with one clear hint instead of a stack trace, and Ctrl-C
-    shows any partial edit of the interrupted order before propagating."""
+    shows any partial edit of the interrupted order before propagating. This is
+    the model editing files in place, so every call is checked against the
+    working tree and edits outside the order are named (`_stray`)."""
     failures = 0
     totals: dict = {"files": set(), "added": 0, "removed": 0}
     with ui.tracker(len(index)) as track:
@@ -1204,6 +1358,7 @@ def _draft(
             )
             track.working(label + (f"  ·  {spend.label()}" if spend.measured else ""))
             before = _snapshot(ctx, row)
+            tree = _dirty(ctx)  # the model edits in place here: bound where it lands
             brief = briefs_dir / row["brief"]
             try:
                 with brief.open("rb") as fh:
@@ -1226,6 +1381,8 @@ def _draft(
                 continue
             except KeyboardInterrupt:
                 ui.fail(f"interrupted — {label} was in flight; checking for edits")
+                for p in _stray(ctx, row, tree):  # a half-done in-place edit is why
+                    ui.warn(f"fix: {p} was edited outside the work order")
                 _tally(ctx, before, totals)
                 _totals_line(totals, spend)
                 raise
@@ -1241,6 +1398,15 @@ def _draft(
                 track.failed(f"failed   {label}" + (f"  — {tail[-1]}" if tail else ""))
             else:
                 track.done(f"drafted  {label}")
+            stray = _stray(ctx, row, tree)
+            if stray:
+                shown = ", ".join(stray[:5]) + (
+                    f", +{len(stray) - 5} more" if len(stray) > 5 else ""
+                )
+                ui.warn(
+                    f"fix: {label} edited {len(stray)} file(s) outside its work "
+                    f"order ({shown}) — not in the undo manifest; review with git diff"
+                )
             _tally(ctx, before, totals)
     _totals_line(totals, spend)
     if touched is not None:  # source targets only — drift rows also edit .md pages
@@ -1406,7 +1572,7 @@ def fix_check(
     base = base or ctx.config.default_base
     bdir = ctx.root / ".documate" / "briefs"
     rc = check.run(ctx, base, briefs_dir=bdir, quiet=quiet)
-    index = _only(json.loads((bdir / "briefs.json").read_text()), only)
+    index = _supported(_only(json.loads((bdir / "briefs.json").read_text()), only))
     if not index:
         if quiet and rc == 0:
             ui.ok("fix: gate passed — drafts verified")
@@ -1512,8 +1678,11 @@ def fix_docs(
     if rc != 0:
         return rc
     bdir = ctx.root / ".documate" / "briefs"
-    index = _only(
-        briefs.emit(ctx, ctx.config.default_base, [], bdir, undocumented="all"), only
+    index = _supported(
+        _only(
+            briefs.emit(ctx, ctx.config.default_base, [], bdir, undocumented="all"),
+            only,
+        )
     )
     if not index:
         ui.ok("fix: nothing to draft" + ("" if only else " — every symbol is documented"))
